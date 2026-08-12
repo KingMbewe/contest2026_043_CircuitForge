@@ -1,9 +1,4 @@
 
-
-https://github.com/user-attachments/assets/480f3d8a-b940-4dd0-b2ef-5292c8d7ff06
-
-
-
 <b>English</b> | <a href="README_zh.md">中文</a>
 
 # VelaPaw — an on-device AI multi-pet smart feeder
@@ -16,7 +11,7 @@ https://github.com/user-attachments/assets/480f3d8a-b940-4dd0-b2ef-5292c8d7ff06
 ## Demo Video
 
 <!-- TODO: paste the GitHub-generated CDN URL here after uploading VelaPaw_Demo.mp4 through the GitHub web editor (drag the file into this README's edit box on github.com). GitHub renders it as a native inline player automatically. -->
-
+https://github.com/user-attachments/assets/480f3d8a-b940-4dd0-b2ef-5292c8d7ff06
 ▶ If the embedded video above doesn't load, [download it directly](VelaPaw_Demo.mp4) (58MB, MP4).
 
 ---
