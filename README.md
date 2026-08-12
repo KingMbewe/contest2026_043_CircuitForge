@@ -16,7 +16,7 @@
 https://github.com/user-attachments/assets/88f0cb95-1f25-4606-aad2-784a267a6f7b
 
 
-▶ If the embedded video above doesn't load, [download it directly](VelaPaw_Demo.mp4) (58MB, MP4).
+▶ If the embedded video above doesn't load, [download it directly](VelaPaw_Demo.mp4) (58MB, MP4). We recommend you download the video for better quality.
 
 ---
 
