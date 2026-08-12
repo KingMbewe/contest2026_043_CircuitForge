@@ -155,8 +155,6 @@ This project was built end-to-end with AI-assisted (AI Coding) development, and 
 
 **Working on hardware today:** on-device recognition, body-condition scoring, recognition-gated 3-meals/day scheduling with a per-slot skip-meal toggle, portion & daily-limit control, feeding history & trends with appetite-drop alerts, hardware RTC, full pet lifecycle with persistent photos, auto-start, a hardware-SPI + DMA display, a bilingual EN/中文 UI with a live toggle, a spoken MEAL→HOUR→CONFIRM meal-scheduling dialog (hardware-proven end to end), the **28BYJ-48 stepper feeder** (turning on GPIO9/10/11/43), the **OV5640 relocated onto a 30 cm FFC** and confirmed working through the coupler + `cam_mast` mount, and the **3D-printed enclosure fully assembled** — stepper dispenser and relocated camera mounted into the printed structure.
 
-**In progress:** an intermittent I²S capture stall on the voice path is not fully root-caused yet, and the current board build trades that fix for the skip-meal feature (both aren't in the same flashed image yet — see `docs/SESSION_STATE.md`).
-
 ---
 
 *Built by team CircuitForge for the 2026 openVela AI Hardware Developer Contest.*
