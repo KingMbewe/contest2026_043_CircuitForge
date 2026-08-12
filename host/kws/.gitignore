@@ -1,0 +1,19 @@
+# Training byproducts. None of this belongs in the contest repo.
+#
+# dataset/ is ~2.4 GB of Speech Commands v0.02 and is re-downloadable from
+# the URL in train_kws.py; checkpoints/ is ~18k steps of tiny_conv state.
+# The ONE artefact that matters downstream is models/kws_int8.tflite, which
+# gen_model_data.py turns into a committed .cc under app/velapaw/voice/gen/.
+dataset/
+checkpoints/
+logs/
+models/
+speech_commands/__pycache__/
+__pycache__/
+
+# ...but do keep the trained model itself, so a rebuild does not require a
+# retrain and reviewers can see exactly what shipped.
+!models/
+models/*
+!models/kws_int8.tflite
+!models/kws_float.tflite

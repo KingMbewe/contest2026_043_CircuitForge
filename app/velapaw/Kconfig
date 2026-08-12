@@ -1,0 +1,119 @@
+#
+# VelaPaw - contest 2026 team 043
+# For Kconfig syntax see kconfig-language.txt in the NuttX tools repository.
+#
+
+config LVX_USE_DEMO_CONTEST2026_043_VELAPAW
+	bool "VelaPaw - multi-pet smart feeder (contest 2026 team 043)"
+	default n
+	---help---
+		VelaPaw: on-device multi-pet recognition smart feeder.
+		Camera identifies the individual pet and dispenses its portion.
+		Emulator-first scaffold (mock camera/feeder, stub inference);
+		backends swap in for OV2640 + TFLite-Micro on the ESP32-S3-EYE.
+
+if LVX_USE_DEMO_CONTEST2026_043_VELAPAW
+
+config VELAPAW_UI
+	bool "LVGL dashboard UI (live recognition on the LCD)"
+	depends on GRAPHICS_LVGL
+	default n
+	---help---
+		Run velapaw as an LVGL dashboard (title + live recognition status +
+		last-fed + on-device infer latency/arena) on the device LCD, instead
+		of the console demo. Run the emulator WITHOUT -no-window to see it.
+
+config VELAPAW_FONT_CJK
+	bool "Chinese (CJK) UI font"
+	depends on VELAPAW_UI
+	default n
+	---help---
+		Render the UI with a Chinese-capable font so the 中文 language toggle
+		shows real glyphs instead of blank boxes. The stock Montserrat fonts
+		are Latin-only. Enabling this expects a generated LVGL font blob to be
+		linked (velapaw_font_cjk_14/16/20) -- see ui/README_I18N.md for the one
+		command that builds it. Adds ~50-150 KB of flash for the glyph subset.
+		Without this, the language toggle still works but Chinese text is blank.
+
+config VELAPAW_INFER_TFLM
+	bool "Use TFLite-Micro inference backend (real INT8 CNN)"
+	depends on TFLITEMICRO
+	default n
+	---help---
+		Replace the stub embedding with a real TFLite-Micro INT8 inference
+		path. Embeds person_detect (a 2-class classifier) as a placeholder
+		model to exercise a genuine on-device inference with measured latency
+		and tensor-arena usage. Swap in a host-trained embedding model for
+		real identity. Requires CONFIG_TFLITEMICRO.
+
+config VELAPAW_INFER_TFLM_ARENA_SIZE
+	int "TFLM tensor arena size (bytes)"
+	depends on VELAPAW_INFER_TFLM
+	default 786432
+	---help---
+		Tensor arena for the embedded model. The MobileNetV3-Small + TSFM
+		embedding model needs more than person_detect; 524288 (512 KB)
+		leaves headroom (actual usage is reported at init).
+
+config VELAPAW_CAMERA_V4L2
+	bool "Capture from V4L2 camera (emulator webcam / OV2640)"
+	depends on VELAPAW_INFER_TFLM && GOLDFISH_CAMERA
+	default n
+	---help---
+		Capture live RGB565 frames from /dev/video (the goldfish webcam in
+		the emulator, or a real sensor on hardware) so the user can enroll
+		their actual pet through the camera. Without this, the demo uses the
+		embedded pet photos (camera_mock).
+
+config VELAPAW_VOICE
+	bool "Voice / keyword spotting (micro_speech)"
+	depends on TFLITEMICRO
+	default n
+	---help---
+		Keyword spotting on the onboard ES8311 microphone, using TFLite-Micro's
+		pre-trained micro_speech example: a 4-category spotter (silence /
+		unknown / yes / no) fed by an MFCC frontend that is itself a .tflite
+		graph rather than hand-written DSP.
+
+		Both models are embedded as rodata (27.5 KB combined).
+
+		REQUIRES the tflite-micro library to be built with its signal/ kernels,
+		which the vendored Makefile does not do by default -- apply
+		board/patches/tflm-signal.py first, or the frontend ops (Window, Rfft,
+		FilterBank, PCAN, ...) fail to link.
+
+		This is a proving harness for the audio pipe. The VelaPaw vocabulary is
+		trained later; see docs/AUDIO_PLAN.md phases 2-4.
+
+config VELAPAW_KWS_SELFTEST
+	bool "Keyword-spotting self-test (velapaw kws)"
+	depends on VELAPAW_VOICE
+	default n
+	---help---
+		Embed test audio and run the whole model path with no microphone
+		involved, via `velapaw kws` at the NSH prompt.
+
+		Checks the frontend against the exact 40-byte feature vector upstream
+		says it must produce for the first 30 ms frame of "yes" and "no", then
+		classifies the 1 s yes/no/silence clips end to end.
+
+		Worth keeping on during bring-up: a bit-exact frontend proves the DSP
+		chain is correct on this target, so any live-microphone failure is
+		capture-side rather than model-side. That is the classic keyword-
+		spotting failure mode, and it is otherwise very hard to localise.
+
+		Adds ~99 KB of rodata. Turn off for the release build.
+
+config VELAPAW_CAMERA_NET
+	bool "Stream host webcam via adb bridge (emulator)"
+	depends on VELAPAW_INFER_TFLM && NET_TCP && NET_LOOPBACK
+	default n
+	---help---
+		Use the REAL host webcam in the emulator. The device runs a TCP server
+		on guest loopback 127.0.0.1:8081; on the host, host/webcam_adb.py runs
+		`adb forward tcp:9999 tcp:8081` and pushes live 128x128 RGB888 frames.
+		This routes over adb's qemud pipe + guest loopback, bypassing both the
+		broken goldfish camera and the broken guest virtio-net. Falls back to
+		embedded photos when no host pusher is connected.
+
+endif

@@ -1,0 +1,57 @@
+{
+  "schema_version": "1.0",
+  "team_id": "contest2026-043",
+  "github_login": "KingMbewe",
+  "generator": "claude-code-collector@1.2.0",
+  "updated_at": "2026-08-11T03:38:37.913381+00:00",
+  "sessions": [
+    {
+      "session_id": "4f0e7a30-1f83-4068-80c4-f333b28c59d3",
+      "tool": "claude-code",
+      "started_at": "2026-06-26T13:33:20.632Z",
+      "last_event_at": "2026-07-07T20:28:50.468Z",
+      "event_count": 31,
+      "raw_event_count": 54,
+      "file_path": "logs/KingMbewe/2026-07-08/claude-code__4f0e7a30-1f83-4068-80c4-f333b28c59d3.jsonl",
+      "collection_mode": "cli",
+      "health": "ok",
+      "model": "claude-opus-4-8"
+    },
+    {
+      "session_id": "837cc89b-802e-45d5-8109-6aa2e1994ab5",
+      "tool": "claude-code",
+      "started_at": "2026-06-26T13:42:11.582Z",
+      "last_event_at": "2026-07-07T20:28:52.658Z",
+      "event_count": 3147,
+      "raw_event_count": 6305,
+      "file_path": "logs/KingMbewe/2026-07-08/claude-code__837cc89b-802e-45d5-8109-6aa2e1994ab5.jsonl",
+      "collection_mode": "cli",
+      "health": "ok",
+      "model": "<synthetic>"
+    },
+    {
+      "session_id": "d884ec58-7475-44f8-9ad3-008772fa79b4",
+      "tool": "claude-code",
+      "started_at": "2026-07-11T17:57:53.507Z",
+      "last_event_at": "2026-07-16T23:56:12.047Z",
+      "event_count": 13,
+      "raw_event_count": 36,
+      "file_path": "logs/KingMbewe/2026-07-17/claude-code__d884ec58-7475-44f8-9ad3-008772fa79b4.jsonl",
+      "collection_mode": "cli",
+      "health": "ok",
+      "model": "claude-opus-4-8"
+    },
+    {
+      "session_id": "3659500b-38f3-47db-bbd0-9b2aab159cd9",
+      "tool": "claude-code",
+      "started_at": "2026-07-04T21:58:22.789Z",
+      "last_event_at": "2026-08-07T07:52:33.469Z",
+      "event_count": 18426,
+      "raw_event_count": 42860,
+      "file_path": "logs/KingMbewe/2026-08-07/claude-code__3659500b-38f3-47db-bbd0-9b2aab159cd9.jsonl",
+      "collection_mode": "cli",
+      "health": "ok",
+      "model": "claude-opus-4-8"
+    }
+  ]
+}

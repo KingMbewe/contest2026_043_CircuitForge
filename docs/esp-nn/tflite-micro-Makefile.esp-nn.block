@@ -1,0 +1,29 @@
+# ============================================================================
+# ESP-NN integration block for apps/mlearning/tflite-micro/Makefile
+#
+# Append this near the end of the tflite-micro Makefile (after the CMSIS block,
+# before `CFLAGS += ${COMMON_FLAGS}`). It is guarded on the esp-nn library being
+# present, so it is a no-op unless apps/mlearning/esp-nn/ exists.
+#
+# What it does:
+#   - compiles the esp-nn opt-C sources (excluding the *esp32s3.c / *esp32p4.c
+#     assembly paths — the portable C path is used);
+#   - adds the esp-nn include dirs and the -DESP_NN build defines;
+#   - swaps the reference (and cmsis_nn) kernels for the esp_nn/*.cc wrappers,
+#     filtering the duplicates out so there are no duplicate symbols at link.
+# ============================================================================
+
+# esp-nn (ESP32-S3 LX7 SIMD kernels)
+ESP_NN_DIR := $(APPDIR)/mlearning/esp-nn
+ifneq ($(wildcard $(ESP_NN_DIR)/include/esp_nn.h),)
+COMMON_FLAGS += -DESP_NN=1 -DCONFIG_NN_OPTIMIZED -mlongcalls
+COMMON_FLAGS += ${INCDIR_PREFIX}$(ESP_NN_DIR)/include
+COMMON_FLAGS += ${INCDIR_PREFIX}$(ESP_NN_DIR)/src/common
+COMMON_FLAGS += ${INCDIR_PREFIX}$(ESP_NN_DIR)/shim
+AFLAGS += -mlongcalls -I$(ESP_NN_DIR)/src/common -I$(ESP_NN_DIR)/include
+ESP_NN_BASE := $(notdir $(wildcard $(TFLM_DIR)/tensorflow/lite/micro/kernels/esp_nn/*.cc))
+CXXSRCS := $(filter-out $(addprefix $(TFLM_DIR)/tensorflow/lite/micro/kernels/, $(ESP_NN_BASE)), $(CXXSRCS))
+CXXSRCS := $(filter-out $(addprefix $(TFLM_DIR)/tensorflow/lite/micro/kernels/cmsis_nn/, $(ESP_NN_BASE)), $(CXXSRCS))
+CXXSRCS += $(wildcard $(TFLM_DIR)/tensorflow/lite/micro/kernels/esp_nn/*.cc)
+CSRCS += $(filter-out %esp32p4.c %esp32s3.c,$(wildcard $(ESP_NN_DIR)/src/*/*.c))
+endif

@@ -1,0 +1,8 @@
+# VelaPaw host-side training/export pipeline (run on the operator's GPU machine,
+# NOT on the device or in the openVela build). Python 3.10-3.11 recommended.
+tensorflow==2.15.*        # includes the TFLite converter used by quantize_export.py
+numpy>=1.23,<2            # TF 2.15 is built against numpy 1.x; numpy 2.x crashes it
+pillow>=9.0               # image IO
+scikit-learn>=1.2         # ROC / threshold selection in eval_separability.py
+matplotlib>=3.6           # optional: distribution plots
+opencv-python==4.9.0.80   # optional: webcam enroll/recognize in demo.py (numpy-1.x compatible)

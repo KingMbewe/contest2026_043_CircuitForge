@@ -1,0 +1,29 @@
+# ── Host training environment & data (large, regenerable — never commit) ──
+host/.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Training datasets & scraped images
+host/data/
+host/bcs/bcs_dataset/
+host/bcs/*.log
+
+# Model-training staging outputs.
+# The models that SHIP are committed at app/velapaw/infer/model/*.tflite;
+# host/export* is only the training pipeline's scratch output.
+host/export/
+host/export128/
+
+# Demo / benchmark image outputs
+host/*.png
+host/**/result*.png
+
+# Build artifacts
+*.o
+*.a
+*.obj
+
+# OS cruft
+.DS_Store
+Thumbs.db

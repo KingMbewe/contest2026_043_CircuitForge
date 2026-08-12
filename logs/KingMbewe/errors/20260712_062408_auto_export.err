@@ -1,0 +1,12 @@
+{
+  "ts": "2026-07-11T22:24:08.555Z",
+  "kind": "auto_export",
+  "tool": "unknown",
+  "team_id": "contest2026-043",
+  "version": "1.2.0",
+  "context": {
+    "repo_root": "D:\\openVela\\contest2026_043_CircuitForge",
+    "session_id": "3659500b-38f3-47db-bbd0-9b2aab159cd9"
+  },
+  "message": "[WinError 32] The process cannot access the file because it is being used by another process"
+}
