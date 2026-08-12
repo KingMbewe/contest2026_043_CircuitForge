@@ -1,5 +1,9 @@
 
 
+https://github.com/user-attachments/assets/480f3d8a-b940-4dd0-b2ef-5292c8d7ff06
+
+
+
 <b>English</b> | <a href="README_zh.md">中文</a>
 
 # VelaPaw — an on-device AI multi-pet smart feeder
