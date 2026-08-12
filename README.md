@@ -1,148 +1,160 @@
-# contest2026_043_CircuitForge
+<b>English</b> | <a href="README_zh.md">中文</a>
 
-👋 欢迎参加 **2026 首届 openvela AI 硬件开发者大赛**！
+# VelaPaw — an on-device AI multi-pet smart feeder
 
-这是组委会为你的队伍创建的**专属参赛仓库**（本仓为样例/模板，队伍编号 `043`；你看到的将是你自己的 `contest2026_<编号>_<队伍名>`）。比赛期间，你的全部参赛代码、打包产物与 AI Coding 日志都提交到这里。
-
-> 本仓既是「代码仓」，又内置了一键拉取整套 openvela 工程的 `repo` 清单（manifest）。你只需跟它打交道，**自始至终只动一个文件夹**。
-
----
-
-## 一、先读这些官方文档
-
-**通用（所有赛道必读）：**
-
-| 文档                                                                                                                                     | 用途                                           |
-| ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| [《大赛总览》](https://github.com/open-vela/docs/blob/dev-ai-contest-2026/zh-cn/contest_2026/contest_overview.md)                        | 赛道、流程、评分、资源，建议先通读             |
-| [《参赛代码提交指南》](https://github.com/open-vela/docs/blob/dev-ai-contest-2026/zh-cn/contest_2026/code_submission_guide.md)           | 仓库获取、提交流程、时间与权限（**以此为准**） |
-| [《AI Coding 日志归集与提交手册》](https://github.com/open-vela/docs/blob/dev-ai-contest-2026/zh-cn/contest_2026/ai_coding_log_guide.md) | 如何导出 AI 对话日志并提交到 `logs/`           |
-
-**按你的赛道选读（三选一）：**
-
-| 赛道                  | 教程导航                                                                                                                                                 |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 快应用 / 手表应用创新 | [快应用教程导航](https://github.com/open-vela/docs/blob/dev-ai-contest-2026/zh-cn/contest_2026/quickapp/quickapp_guide_index.md)                         |
-| AI 硬件产品创新       | [AI 硬件赛道教程导航](https://github.com/open-vela/docs/blob/dev-ai-contest-2026/zh-cn/contest_2026/ai_hardware/ai_hardware_guide_index.md)              |
-| 新硬件适配            | [新硬件适配赛道教程导航](https://github.com/open-vela/docs/blob/dev-ai-contest-2026/zh-cn/contest_2026/hardware_porting/hardware_porting_guide_index.md) |
+**Team:** CircuitForge (`contest2026_043`) · **Track:** AI Hardware Product Innovation (AI 硬件产品创新)
+**Platform:** openVela (NuttX) on a Waveshare **ESP32-S3-Touch-LCD-3.5-C**
 
 ---
 
-## 二、第一步：拉取完整工程
+## Demo Video
 
-用组委会提供的命令一键拉取「openvela 全量源码 + 你的专属仓」：
+<!-- TODO: paste the GitHub-generated CDN URL here after uploading VelaPaw_Demo.mp4 through the GitHub web editor (drag the file into this README's edit box on github.com). GitHub renders it as a native inline player automatically. -->
+
+▶ If the embedded video above doesn't load, [download it directly](VelaPaw_Demo.mp4) (58MB, MP4).
+
+---
+
+## 1. What it is
+
+**VelaPaw is a smart pet feeder that recognizes *which* pet is at the bowl and dispenses that individual pet's scheduled meal — with every bit of AI running on the device itself. No cloud, no phone, no account.**
+
+In a multi-pet home, a normal timed feeder can't tell the cats apart, so the greedy one eats everyone's food and portion control is impossible. VelaPaw solves this the way a human would: it *looks* at the animal, identifies it, and feeds it only its own ration, at its own mealtimes. Because the camera, the neural networks, the clock, and the dispenser are all self-contained, it keeps working with the internet down and never sends images of your home anywhere.
+
+**Highlights**
+
+- 🐾 **Per-pet identification** — an on-device INT8 neural network recognizes each enrolled pet by face, not by a tag or collar.
+- 🍽️ **Recognition-gated feeding** — a pet is fed only when it is *recognized at the bowl* **and** one of *its* meals is due (and not skipped), at most once per meal per day. Each meal slot has its own **skip-meal** toggle.
+- 🗣️ **Voice-settable schedules** — meal times can be spoken, not just tapped: a MEAL→HOUR→CONFIRM voice dialog, driven by an on-device keyword-spotting model, sets a pet's feeding schedule hands-free.
+- ⚖️ **Portion & daily-limit control** — per-pet gram portions with a hard daily cap.
+- 🩺 **Health monitoring** — a second on-device network estimates Body Condition (under / ideal / over), and the feeding-history analytics raise a **sudden-appetite-drop alert**, an early illness sign.
+- 🕑 **Real timekeeping** — a hardware RTC keeps schedules accurate across power loss.
+- 🌐 **Bilingual UI** — English / 中文, with a live in-app language toggle.
+- 💾 **Everything persists** — enrolled pets, schedules, and pet photos survive a power cut.
+- 🖥️ **Runs as an appliance** — boots straight into a touchscreen UI; no console needed.
+
+**Why now:** in March 2026, Xiaomi shipped the Mijia Smart Pet Feeder 2 (Visual Edition) — a mass-market feeder (¥449–549, ≈$65–80) that added a camera specifically to bring AI vision into feeding. That's independent, at-scale validation of VelaPaw's founding bet — a camera belongs at the feeder — carried one step further: from watching a bowl to knowing *whose* bowl it is, identified by face and fed entirely on-device with no app, account, or cloud. Full comparison in [§06 Market & Value](VelaPaw_Project_Intro.pdf) of the project intro.
+
+---
+
+## 2. On-device AI (the heart of the project)
+
+Recognition is **open-set metric learning**, not a fixed classifier. The model is a generic pet feature-extractor (MobileNetV3-Small backbone + a spatial-attention *TSFM* module) that turns a camera frame into an L2-normalized 128-D **embedding**. Enrolling a pet stores the averaged embedding of a few photos; recognition is a cosine match against the enrolled pets. This is why **adding a pet needs no retraining** — enrollment is a first-class step, and recognition quality is driven by good enrollment photos rather than a frozen label set.
+
+| | |
+|---|---|
+| **Identity model** | MobileNetV3-Small + TSFM attention, INT8, 128-D embedding, 128×128 input |
+| **Body-condition model** | 3-class (under/ideal/over) INT8 CNN |
+| **Runtime** | TensorFlow Lite for Microcontrollers (`apps/mlearning/tflite-micro`) |
+| **Acceleration** | ESP-NN SIMD kernels on the Xtensa LX7 → **~1.3 s / inference** (vs ~6.75 s reference) |
+| **Where models live** | flash-loaded at runtime (1.4 MB identity @ `0x600000`, 626 KB BCS @ `0x760000`) — too large to memory-map, so read into PSRAM on boot |
+
+Both models were trained off-device with the pipeline in [`host/`](host/) (TensorFlow/Keras → INT8 post-training quantization → `.tflite`).
+
+---
+
+## 3. How it works — from camera to kibble
+
+```
+   camera frame ──► embedding (TFLM, INT8) ──► cosine match vs enrolled pets
+                                                        │
+                                             recognized pet + score
+                                                        │
+                                        is one of THIS pet's meals due & unfed today?
+                                                   │yes            │no
+                                              dispense N g      show "next meal 18:00"
+                                       (28BYJ-48 stepper, paddle rotor)
+                                                   │
+                                        log to history · update trends · BCS check
+```
+
+The gate in the middle is the whole idea: recognition alone would feed a greedy pet all day; a timer alone would feed whichever animal happened to be standing there. **Both must agree.**
+
+**Software architecture** (clean HAL boundaries, in [`app/velapaw/`](app/velapaw/)):
+
+- `ui/` — LVGL touchscreen UI (Enroll · Recognize · My Pets · Trends)
+- `infer/` — inference interface + the TFLite-Micro backend + the trained models
+- `identity/` — enrollment store, cosine matcher, per-pet flash persistence, pet photos
+- `store/` — feeding history & behavior analytics
+- `hal/` — camera (OV5640) and feeder (28BYJ-48 stepper) hardware abstraction
+
+**Board support** ([`board/`](board/)) — a custom board file drives the display, the OV5640 camera via the ESP32-S3 LCD_CAM peripheral, the PCF85063 RTC over I²C, and the feeder's **28BYJ-48 stepper** through a ULN2003 driver on four GPIOs (IN1–IN3/IN4 on GPIO9/10/11/**43**). The display runs over **hardware SPI at 40 MHz with DMA**. The ES8311 audio codec's private I²S bus (GPIO12–16, not routed to any header) drives the onboard mic and speaker for the voice-settable schedules.
+
+---
+
+## 4. Hardware
+
+- **Waveshare ESP32-S3-Touch-LCD-3.5-C** — ESP32-S3, 8 MB PSRAM, 16 MB flash, 320×480 ST7796 touch LCD, OV5640 camera, PCF85063 RTC.
+
+> **Why this board — same SoC, right peripherals.** This board carries the **same ESP32-S3** as the contest-provided ESP32-S3-EYE, so the openVela port, the on-device inference, and every driver are identical work on that chip. What VelaPaw additionally needs is a **capacitive touch display** — enrolling a pet, editing meal schedules and reviewing trends all happen on-screen — and a **real-time clock** so scheduled feeding survives power loss. The ESP32-S3-EYE is a vision/voice development board with a small non-touch screen and no RTC; the Waveshare Touch-LCD-3.5-C integrates the 3.5″ touch LCD, OV5640 camera and PCF85063 RTC the product depends on, in a single board. Same platform, chosen carrier.
+- **Feeder** — a **28BYJ-48 stepper**-driven **paddle-rotor** dispenser (via a ULN2003 driver): a vaned rotor meters a fixed pocket of kibble per step, so the portion depends on rotation, not on how full the hopper is. Fully parametric 3D model + printable STLs and BOM in [`hardware/`](hardware/).
+- **Camera on a 30 cm FFC** — the OV5640 is unplugged from the board and run out on a 30 cm ribbon + 1:1 coupler to its own **`cam_mast`** yoke in front of the bowl, so the screen faces the owner while the lens watches the pet. (A reversed FFC is fatal on power-on — orientation is meter-verified; see [`hardware/README.md`](hardware/README.md).)
+
+---
+
+## 5. Repository layout
+
+```
+app/velapaw/     — the device application (linkfile'd to packages/demos/ by the manifest)
+board/           — board files: display/camera/RTC/stepper (esp32s3_st7789.c),
+                   auto-start (esp32s3_appinit.c), and the board defconfig
+host/            — off-device model training & export (TensorFlow/Keras)
+hardware/        — 3D-printable feeder (OpenSCAD source + STLs + BOM)
+docs/            — technical notes and benchmark reports
+logs/            — AI-Coding session logs (this project was built with AI assistance)
+```
+
+---
+
+## 6. Build & run (real hardware)
 
 ```bash
+# 1. Pull openVela + this team repo
 repo init -u https://github.com/open-vela/contest2026_043_CircuitForge \
   -b dev-ai-contest-2026 -m contest2026_043_CircuitForge.xml
 repo sync -c -j8
+
+# 2. Place the board files into the ESP32-S3 board tree
+BOARD=nuttx/boards/xtensa/esp32s3/esp32s3-devkit
+cp contest2026_043_CircuitForge/board/esp32s3_st7789.c   $BOARD/src/
+cp contest2026_043_CircuitForge/board/esp32s3_appinit.c  $BOARD/src/
+cp contest2026_043_CircuitForge/board/esp32s3_bringup.c  $BOARD/src/
+cp contest2026_043_CircuitForge/board/configs/waveshare_lcd/defconfig \
+   $BOARD/configs/waveshare_lcd/defconfig
+
+# 3. Build (from the openVela workspace root)
+./build.sh esp32s3-devkit:waveshare_lcd -j8
+
+# 4. Flash firmware + the two on-device models
+esptool --chip esp32s3 --port <PORT> write-flash \
+  0x0        nuttx/nuttx.bin \
+  0x600000   contest2026_043_CircuitForge/app/velapaw/infer/model/velapaw.tflite \
+  0x760000   contest2026_043_CircuitForge/app/velapaw/infer/model/bcs.tflite
 ```
 
-同步后，你的整个仓库位于工作区的 `contest2026_043_CircuitForge/`，openvela 全量源码在外层（`nuttx/`、`apps/`、`packages/`、`vendor/` 等）。
+On boot the device runs the feeder UI directly. **Enroll a pet** (capture a few tight, well-lit face photos), then the **Recognize** tab identifies it and feeds on schedule.
+
+> **Note on inference speed:** the ~1.3 s figure uses the ESP-NN accelerated kernels. See the [engineering deep-dive](docs/ENGINEERING.md) for the acceleration setup, the hardware-SPI display debug, and reproducibility notes.
 
 ---
 
-## 三、第二步：在哪里写代码
+## 7. AI-assisted development
 
-**只在自己的仓目录 `contest2026_043_CircuitForge/` 里开发。** 不同作品形态放在对应子目录，manifest 会通过 `<linkfile>` 把它们**软链**到 openvela 编译树该在的位置——你不用手动 copy：
+This project was built end-to-end with AI-assisted (AI Coding) development, and the full session logs are committed under [`logs/`](logs/) as required. AI was used throughout the lifecycle:
 
-| 作品形态 | 你的代码放这里             | 系统自动映射到                                 |
-| -------- | -------------------------- | ---------------------------------------------- |
-| 应用     | `app/hello_app/`           | `packages/demos/contest2026_043_hello_app`     |
-| 快应用   | `quickapp/hello_quickapp/` | `packages/apps/contest2026_043_hello_quickapp` |
-| 板级适配 | `board/contest_board/`     | `vendor/openvela/boards/contest2026_043_board` |
-
-> 用不到的形态目录可以删掉；新增作品时按同样规则加子目录，并在 `contest2026_043_CircuitForge.xml` 里补一条 `<linkfile>` 映射即可。**生产仓库（packages/nuttx/vendor 等）零改动。**
-
-建议仓库目录约定（便于评委定位）：
-
-```text
-app/ | quickapp/ | board/   # 你的作品代码
-logs/                       # AI Coding 日志（主动导出后提交，格式见 logs/README.md）
-README.md                   # 作品说明（提交前请改成你自己的，见第六节）
-```
-
-> 仓内附带了一个 `.gitignore.example`，给出了**编译产物**等不需要进仓的文件示例。如需启用，`cp .gitignore.example .gitignore` 后按需增删即可。**注意 `logs/` 下最终导出的 AI Coding 日志必须提交，不要忽略。**
->
-> `logs/` 的目录结构与提交格式见 [logs/README.md](logs/README.md)。
+- **Requirements & design** — shaping the recognition-gated feeding model, the open-set enrollment approach, and the health-monitoring analytics.
+- **Firmware & drivers** — bringing up the display, OV5640 camera (LCD_CAM), RTC, and the 28BYJ-48 stepper feeder on the ESP32-S3; wiring TensorFlow Lite Micro + ESP-NN onto the Xtensa LX7.
+- **Hard debugging** — the standout example: a hardware-SPI display bug that survived ~60 blind build cycles was cracked with a **logic analyzer**, root-caused to the CS-tied-low panel losing bit-sync at the pad handover, and turned into a **display speedup** (bit-bang → hardware SPI + DMA).
+- **Product iteration** — the full pet lifecycle (enroll, recognize, feed, edit, delete, photos), all tested on real hardware.
 
 ---
 
-## 四、第三步：编译与运行
+## 8. Status
 
-编译/运行步骤随作品形态不同而不同，请参考你所在赛道的教程导航：
+**Working on hardware today:** on-device recognition, body-condition scoring, recognition-gated 3-meals/day scheduling with a per-slot skip-meal toggle, portion & daily-limit control, feeding history & trends with appetite-drop alerts, hardware RTC, full pet lifecycle with persistent photos, auto-start, a hardware-SPI + DMA display, a bilingual EN/中文 UI with a live toggle, a spoken MEAL→HOUR→CONFIRM meal-scheduling dialog (hardware-proven end to end), the **28BYJ-48 stepper feeder** (turning on GPIO9/10/11/43), the **OV5640 relocated onto a 30 cm FFC** and confirmed working through the coupler + `cam_mast` mount, and the **3D-printed enclosure fully assembled** — stepper dispenser and relocated camera mounted into the printed structure.
 
-- 快应用 / 手表应用：[快应用教程导航](https://github.com/open-vela/docs/blob/dev-ai-contest-2026/zh-cn/contest_2026/quickapp/quickapp_guide_index.md)（含模拟器与开发板部署）。
-- AI 硬件产品创新：[AI 硬件赛道教程导航](https://github.com/open-vela/docs/blob/dev-ai-contest-2026/zh-cn/contest_2026/ai_hardware/ai_hardware_guide_index.md)（环境搭建、编译烧录、Skill 开发）。
-- 新硬件适配：[新硬件适配赛道教程导航](https://github.com/open-vela/docs/blob/dev-ai-contest-2026/zh-cn/contest_2026/hardware_porting/hardware_porting_guide_index.md)（BSP 移植、最小 NSH 基线）。
-
-子目录已通过 manifest 中的 `<linkfile>` 软链进 openvela 编译树，因此构建在 openvela 工作区**根目录**（即你这个仓的上一级）进行。openvela 使用 `build.sh` 作为统一入口，接收一个 **board config 路径**作为参数：
-
-```bash
-# 进入 openvela 工作区根目录（你的仓的上一级）
-cd ..
-
-# 通用语法：第一个参数是 board config 路径，第二个参数可以是 menuconfig / distclean 等
-./build.sh <board-config-path> [menuconfig|distclean] [-j8]
-```
-
-> 具体的 board config 路径、目标产物、模拟器/真机部署方式请以你所在赛道的教程导航为准。本仓 `app/` `quickapp/` `board/` 三个示例骨架对应的 Kconfig 选项可通过 `menuconfig` 启用。
+**In progress:** an intermittent I²S capture stall on the voice path is not fully root-caused yet, and the current board build trades that fix for the skip-meal feature (both aren't in the same flashed image yet — see `docs/SESSION_STATE.md`).
 
 ---
 
-## 五、第四步：提交作品
-
-1. **fork** 你的专属仓 → 开发 → `git commit` 并推送 → 向专属仓发起 **Pull Request**，可**自行 review 并合入**（无需等组委会）。
-2. **AI Coding 日志**：与 AI 工具的对话会自动记录到本机 staging（不会自动上传），需你**主动导出/打包**选定会话到仓内 `logs/` 目录后一并提交。详见[《AI Coding 日志归集与提交手册》](https://github.com/open-vela/docs/blob/dev-ai-contest-2026/zh-cn/contest_2026/ai_coding_log_guide.md)。
-3. 若需改动 **nuttx 等公共仓库**，不在本仓改，而是 fork 对应公共仓、以 PR 提交到 `dev-ai-contest-2026` 分支，由组委会 review 后合入。
-
-> ⏰ **提交作品截止：9 月 20 日**。截止后统一收回 push 权限，仍可查看 / clone。
->
-> 获奖后再按要求将作品 PR 至 openvela 上游对应仓库（走标准 PR + CI 流程）。
-
-### 关于 PR 与 CLA
-
-- 本仓所有改动通过 **Pull Request** 合入（分支保护强制，可自行合入自己的 PR）。
-- 首次贡献需在[**官网签署 CLA**](https://openvela.com/#/community/cla)；PR 上会自动跑 `cla/signature` 检查，在官网签署成功后，在 PR 评论 `/check-cla` 复检即可通过。
-
----
-
-## 六、提交前：把本 README 改成你的作品说明
-
-本文件目前是组委会给的**使用说明书**。**作品提交前，请把它替换成你自己作品的说明**，方便评委快速了解你做了什么、怎么跑起来。建议至少包含以下内容：
-
-```markdown
-# <你的作品名>
-
-## 一、作品简介
-<一句话/一段话说明这个作品是什么、解决什么问题、亮点在哪>
-
-## 二、选题方向
-<快应用 / 手表应用创新 ｜ AI 硬件产品创新 ｜ 新硬件适配 ｜ 自定方向，并简述理由>
-
-## 三、目录结构
-<列出你这个仓里各目录/文件的作用，例如：>
-- `app/xxx/`        — <说明>
-- `board/xxx/`      — <说明>
-- `quickapp/xxx/`   — <说明>
-- `logs/`           — AI Coding 日志
-- `docs/` 或其他    — <说明>
-
-## 四、运行方式
-<拉取工程后，如何编译、烧录/部署、运行的完整步骤；最好能让评委照着一步步复现>
-
-## 五、AI Coding 使用说明
-<说明本作品如何借助 AI 辅助开发：
-- 在需求拆解 / 方案设计 / 编码 / 调试 / 文档等环节如何与 AI 协作；
-- AI 对开发效率或质量带来的实际帮助。
-完整对话日志见 logs/ 目录>
-```
-
-> 提示：将会根据「作品本身 + 你的 README 说明 + `logs/` 里的 AI Coding 日志」来理解和评估你的作品，README 写清楚很重要。
-
----
-
-## 附：仓库命名规范
-
-`contest2026_<编号>_<队伍名>` — 编号三位零填充；队名 slug（全小写、英文/拼音、连字符）。例：`contest2026_043_CircuitForge`。
-（仓库由组委会统一创建，**每队仅一个仓**，无需自行命名。）
+*Built by team CircuitForge for the 2026 openVela AI Hardware Developer Contest.*

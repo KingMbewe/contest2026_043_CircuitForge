@@ -1,0 +1,467 @@
+diff --git a/arch/xtensa/src/esp32s3/esp32s3_i2s.c b/arch/xtensa/src/esp32s3/esp32s3_i2s.c
+index e7b56ec004e..8154c9609b0 100644
+--- a/arch/xtensa/src/esp32s3/esp32s3_i2s.c
++++ b/arch/xtensa/src/esp32s3/esp32s3_i2s.c
+@@ -41,6 +41,7 @@
+ 
+ #include <nuttx/arch.h>
+ #include <nuttx/irq.h>
++#include <nuttx/mutex.h>
+ #include <nuttx/clock.h>
+ #include <nuttx/semaphore.h>
+ #include <nuttx/spinlock.h>
+@@ -1232,6 +1233,118 @@ static void i2s_tx_worker(void *arg)
+ 
+       i2s_buf_free(priv, bfcontainer);
+     }
++
++  /* VelaPaw patch #19: one-shot RX DMA state dump, taken the first time
++   * the primed silent TX buffer drains.  This runs on HPWORK (thread
++   * context) -- syslog() from the I2S ISR faults on this board.
++   */
++
++  if (priv->config->rx_en)
++    {
++      static bool vp_dumped = false;
++
++      if (!vp_dumped)
++        {
++          struct esp32s3_dmadesc_s *vpd;
++          sq_entry_t *vpe;
++          int vpact = 0;
++          int vppend = 0;
++          int vpdone = 0;
++          int i;
++
++          vp_dumped = true;
++
++          for (vpe = sq_peek(&priv->rx.act); vpe != NULL; vpe = sq_next(vpe))
++            {
++              vpact++;
++            }
++
++          for (vpe = sq_peek(&priv->rx.pend); vpe != NULL; vpe = sq_next(vpe))
++            {
++              vppend++;
++            }
++
++          for (vpe = sq_peek(&priv->rx.done); vpe != NULL; vpe = sq_next(vpe))
++            {
++              vpdone++;
++            }
++
++          syslog(LOG_ERR,
++                 "VP: RXDUMP rxconf=%08lx txconf=%08lx eofnum=%08lx\n",
++                 (unsigned long)getreg32(
++                     I2S_RX_CONF_REG(priv->config->port)),
++                 (unsigned long)getreg32(
++                     I2S_TX_CONF_REG(priv->config->port)),
++                 (unsigned long)getreg32(
++                     I2S_RXEOF_NUM_REG(priv->config->port)));
++
++          syslog(LOG_ERR,
++                 "VP: RXDUMP raw=%08lx link=%08lx state=%08lx fifo=%08lx\n",
++                 (unsigned long)GET_GDMA_CH_REG(DMA_IN_INT_RAW_CH0_REG,
++                                                priv->dma_channel),
++                 (unsigned long)GET_GDMA_CH_REG(DMA_IN_LINK_CH0_REG,
++                                                priv->dma_channel),
++                 (unsigned long)GET_GDMA_CH_REG(DMA_IN_STATE_CH0_REG,
++                                                priv->dma_channel),
++                 (unsigned long)GET_GDMA_CH_REG(DMA_INFIFO_STATUS_CH0_REG,
++                                                priv->dma_channel));
++
++          syslog(LOG_ERR,
++                 "VP: RXDUMP eofdes=%08lx dscr=%08lx act=%d pend=%d done=%d\n",
++                 (unsigned long)GET_GDMA_CH_REG(
++                     DMA_IN_SUC_EOF_DES_ADDR_CH0_REG, priv->dma_channel),
++                 (unsigned long)GET_GDMA_CH_REG(DMA_IN_DSCR_CH0_REG,
++                                                priv->dma_channel),
++                 vpact, vppend, vpdone);
++
++          /* VelaPaw patch #24 (DIAGNOSTIC ONLY -- read-only registers).
++           * i2sraw bit0 = RX_DONE, bit2 = RX_HUNG: has the I2S RX peripheral
++           * ever completed a frame, independent of the GDMA? perisel says
++           * whether this GDMA channel is bound to I2S0 at all -- if it is
++           * not, the channel waits forever for a request that never comes,
++           * which is exactly an empty FIFO plus INFIFO_UDF.
++           */
++
++          syslog(LOG_ERR,
++                 "VP: RXDUMP i2sraw=%08lx perisel=%08lx inconf0=%08lx ch=%d\n",
++                 (unsigned long)getreg32(
++                     I2S_INT_RAW_REG(priv->config->port)),
++                 (unsigned long)GET_GDMA_CH_REG(DMA_IN_PERI_SEL_CH0_REG,
++                                                priv->dma_channel),
++                 (unsigned long)GET_GDMA_CH_REG(DMA_IN_CONF0_CH0_REG,
++                                                priv->dma_channel),
++                 (int)priv->dma_channel);
++
++          syslog(LOG_ERR,
++                 "VP: RXDUMP rxclkm=%08lx rxdiv=%08lx rxconf1=%08lx\n",
++                 (unsigned long)getreg32(
++                     I2S_RX_CLKM_CONF_REG(priv->config->port)),
++                 (unsigned long)getreg32(
++                     I2S_RX_CLKM_DIV_CONF_REG(priv->config->port)),
++                 (unsigned long)getreg32(
++                     I2S_RX_CONF1_REG(priv->config->port)));
++
++          syslog(LOG_ERR,
++                 "VP: RXDUMP rxtdm=%08lx txtdm=%08lx\n",
++                 (unsigned long)getreg32(
++                     I2S_RX_TDM_CTRL_REG(priv->config->port)),
++                 (unsigned long)getreg32(
++                     I2S_TX_TDM_CTRL_REG(priv->config->port)));
++
++          bfcontainer = (struct esp32s3_buffer_s *)sq_peek(&priv->rx.act);
++          if (bfcontainer != NULL)
++            {
++              vpd = bfcontainer->dma_link;
++              for (i = 0; i < 4 && vpd != NULL; i++)
++                {
++                  syslog(LOG_ERR,
++                         "VP: RXDUMP d[%d] ctrl=%08lx buf=%p next=%p\n",
++                         i, (unsigned long)vpd->ctrl, vpd->pbuf, vpd->next);
++                  vpd = vpd->next;
++                }
++            }
++        }
++    }
+ }
+ #endif /* I2S_HAVE_TX */
+ 
+@@ -1269,6 +1382,7 @@ static void i2s_rx_worker(void *arg)
+    *
+    */
+ 
++
+   i2sinfo("rx.act.head=%p rx.done.head=%p\n",
+           priv->rx.act.head, priv->rx.done.head);
+ 
+@@ -1289,14 +1403,87 @@ static void i2s_rx_worker(void *arg)
+ 
+       bfcontainer->apb->nbytes = 0;
+ 
+-      while (dmadesc != NULL && (dmadesc->ctrl & ESP32S3_DMA_CTRL_EOF))
++      /* VelaPaw patch #10: the loop condition tested EOF on every link,
++       * but the hardware sets suc_eof only on the LAST descriptor of a
++       * chain.  On any multi-descriptor transfer it therefore exited on
++       * d[0] and reported nbytes == 0.  Sum the whole chain, stopping
++       * after the descriptor that carries EOF.
++       */
++
++      while (dmadesc != NULL)
+         {
+           bfcontainer->apb->nbytes +=
+               (dmadesc->ctrl >> ESP32S3_DMA_CTRL_DATALEN_S) &
+               ESP32S3_DMA_CTRL_DATALEN_V;
++
++          if (dmadesc->ctrl & ESP32S3_DMA_CTRL_EOF)
++            {
++              break;
++            }
++
+           dmadesc = dmadesc->next;
+         }
+ 
++      /* VelaPaw patch #30: count railed samples and report DC offset, to
++       * separate genuine clipping (many railed samples) from a structural
++       * boundary artifact (a fixed one or two 0x8000 per buffer).
++       */
++
++      {
++        static uint32_t vp_seq = 0;
++
++        if ((vp_seq++ & 7) == 0)
++          {
++            int16_t *vs = (int16_t *)bfcontainer->apb->samp;
++            uint32_t vn = bfcontainer->apb->nbytes / 2;
++            uint32_t vi;
++            int32_t  vpeak = 0;
++            uint32_t vpidx = 0;
++            uint32_t vrail = 0;
++            uint32_t vm8 = 0;
++            int64_t  vdc = 0;
++            uint64_t vsum = 0;
++
++            for (vi = 0; vi < vn; vi++)
++              {
++                int32_t vv = vs[vi];
++
++                vdc += vv;
++
++                if (vv == -32768)
++                  {
++                    vm8++;
++                  }
++
++                if (vv < 0)
++                  {
++                    vv = -vv;
++                  }
++
++                if (vv >= 32000)
++                  {
++                    vrail++;
++                  }
++
++                if (vv > vpeak)
++                  {
++                    vpeak = vv;
++                    vpidx = vi;
++                  }
++
++                vsum += (uint32_t)vv;
++              }
++
++            syslog(LOG_ERR, "VP: mic n=%" PRIu32 " peak=%" PRId32
++                            "@%" PRIu32 " mean=%" PRIu32
++                            " dc=%" PRId32 " rail=%" PRIu32
++                            " m8=%" PRIu32 "\n",
++                   vn, vpeak, vpidx,
++                   vn ? (uint32_t)(vsum / vn) : 0,
++                   vn ? (int32_t)(vdc / (int64_t)vn) : 0, vrail, vm8);
++          }
++      }
++
+       /* Perform the RX transfer done callback */
+ 
+       DEBUGASSERT(bfcontainer && bfcontainer->callback);
+@@ -1409,11 +1596,33 @@ static void i2s_configure(struct esp32s3_i2s_s *priv)
+                       I2S_RX_CLK_ACTIVE);
+         }
+ 
+-      esp32s3_configgpio(priv->config->din_pin, INPUT_FUNCTION_2);
++      /* VelaPaw patch #22 (DIAGNOSTIC ONLY -- revert before shipping).
++       * When DIN and DOUT name the same pad, keep the output driver enabled
++       * so TX data loops back into RX through the pad itself. This exercises
++       * the RX FIFO + GDMA + framing with the codec entirely out of circuit.
++       */
++
++      if (priv->config->din_pin == priv->config->dout_pin)
++        {
++          esp32s3_configgpio(priv->config->din_pin,
++                             INPUT_FUNCTION_2 | OUTPUT);
++        }
++      else
++        {
++          esp32s3_configgpio(priv->config->din_pin, INPUT_FUNCTION_2);
++        }
++
+       esp32s3_gpio_matrix_in(priv->config->din_pin,
+                              priv->config->din_insig, 0);
+     }
+ 
++  syslog(LOG_ERR, "VP: i2s pins din=%d dout=%d bclk=%d ws=%d mclk=%d "
++                  "role=%d tx_en=%d rx_en=%d\n",
++         priv->config->din_pin, priv->config->dout_pin,
++         priv->config->bclk_pin, priv->config->ws_pin,
++         priv->config->mclk_pin, priv->config->role,
++         priv->config->tx_en, priv->config->rx_en);
++
+   if (priv->config->role == I2S_ROLE_SLAVE)
+     {
+       if (priv->config->tx_en && !priv->config->rx_en)
+@@ -1501,6 +1710,14 @@ static void i2s_configure(struct esp32s3_i2s_s *priv)
+   if (priv->config->tx_en && priv->config->rx_en)
+     {
+       modifyreg32(I2S_TX_CONF_REG(priv->config->port), 0, I2S_SIG_LOOPBACK);
++
++      /* VelaPaw patch #16: I2S_TX_STOP_EN defaults to 1, which gates BCLK
++       * and WS off whenever the TX FIFO empties.  In loopback the RX side
++       * is a slave on those same lines, so it would lose its clock every
++       * time playback ran dry.
++       */
++
++      modifyreg32(I2S_TX_CONF_REG(priv->config->port), I2S_TX_STOP_EN, 0);
+     }
+   else
+     {
+@@ -1634,6 +1851,49 @@ static void i2s_configure(struct esp32s3_i2s_s *priv)
+             }
+         }
+ 
++      /* VelaPaw patch #25: program the RX TDM slot map.
++       *
++       * i2s_txchannels() writes I2S_TX_TDM_CTRL_REG (total channel count +
++       * per-slot enables), but nothing in this driver ever writes
++       * I2S_RX_TDM_CTRL_REG -- i2s_rxchannels() only stores priv->channels
++       * and programs no registers at all. So RX is left at the reset
++       * default of TOT_CHAN_NUM=0, i.e. ONE slot per frame, while
++       * RX_CONF1 describes a two-slot 32-bit frame. The receiver then
++       * completes frames (I2S_RX_DONE_INT_RAW sets) but the slot map never
++       * matches, nothing valid reaches the RX FIFO, and the GDMA input
++       * FIFO underflows forever with IN_DONE never firing.
++       */
++
++      if (priv->config->rx_en)
++        {
++          uint32_t rx_chan_mask;
++
++          modifyreg32(I2S_RX_TDM_CTRL_REG(priv->config->port),
++                      I2S_RX_TDM_TOT_CHAN_NUM_M,
++                      FIELD_TO_VALUE(I2S_RX_TDM_TOT_CHAN_NUM, 1));
++
++          rx_chan_mask  = getreg32(I2S_RX_TDM_CTRL_REG(priv->config->port));
++          rx_chan_mask &= 0xffff0000;
++          rx_chan_mask |= I2S_RX_TDM_PDM_CHAN0_EN | I2S_RX_TDM_PDM_CHAN1_EN;
++
++          putreg32(rx_chan_mask, I2S_RX_TDM_CTRL_REG(priv->config->port));
++
++          /* Latch it. Self-clearing. */
++
++          /* The ES8311 is a mono codec, and es8311_start() writes
++           * GPIO_REG44 = 0x50 -- ADC on the left slot, the DAC's own
++           * output on the right.  Capturing both slots would feed
++           * playback straight back into the record stream, so keep
++           * only the first slot.  I2S_RX_MONO_FST_VLD defaults to 1
++           * (first channel valid), which is the ADC.
++           */
++
++          modifyreg32(I2S_RX_CONF_REG(priv->config->port),
++                      I2S_RX_MONO_M, I2S_RX_MONO);
++
++          modifyreg32(I2S_RX_CONF_REG(priv->config->port), 0, I2S_RX_UPDATE);
++        }
++
+       /* Congfigure RX chan bit, audio data bit and mono mode.
+        * On ESP32, sample_bit should equals to data_bit.
+        */
+@@ -1829,19 +2089,35 @@ static uint32_t i2s_set_datawidth(struct esp32s3_i2s_s *priv)
+                   FIELD_TO_VALUE(I2S_RX_HALF_SAMPLE_BITS,
+                   priv->data_width - 1));
+ 
++      /* VelaPaw patch #20a: upstream has the PCM / non-PCM branches
++       * swapped for RX -- compare the TX block above.  Standard I2S needs
++       * a WS half period of data_width bit clocks; PCM needs a one-clock
++       * pulse.  Swapped, the RX front end hunted for a 2-BCLK frame while
++       * TX generated a 32-BCLK one, so RX never assembled a sample and the
++       * GDMA sat armed with DATALEN=0 and INFIFO_UDF_L1 set.
++       */
++
+       if (priv->config->audio_std_mode == I2S_TDM_PCM)
+         {
+           modifyreg32(I2S_RX_CONF1_REG(priv->config->port),
+                       I2S_RX_TDM_WS_WIDTH_M,
+-                      FIELD_TO_VALUE(I2S_RX_TDM_WS_WIDTH,
+-                      priv->data_width - 1));
++                      FIELD_TO_VALUE(I2S_RX_TDM_WS_WIDTH, 1));
+         }
+       else
+         {
+           modifyreg32(I2S_RX_CONF1_REG(priv->config->port),
+                       I2S_RX_TDM_WS_WIDTH_M,
+-                      FIELD_TO_VALUE(I2S_RX_TDM_WS_WIDTH, 1));
++                      FIELD_TO_VALUE(I2S_RX_TDM_WS_WIDTH,
++                      priv->data_width - 1));
+         }
++
++      /* VelaPaw patch #20b: the TX branch pulses I2S_TX_UPDATE to promote
++       * these fields into the I2S clock domain; the RX branch never pulsed
++       * I2S_RX_UPDATE.  Masked today because i2s_rxdatawidth() brackets
++       * this in rx_channel_stop/start, but it must not depend on that.
++       */
++
++      modifyreg32(I2S_RX_CONF_REG(priv->config->port), 0, I2S_RX_UPDATE);
+     }
+ #endif /* I2S_HAVE_RX */
+ 
+@@ -2860,6 +3136,7 @@ static int i2s_receive(struct i2s_dev_s *dev, struct ap_buffer_s *apb,
+ {
+   struct esp32s3_i2s_s *priv = (struct esp32s3_i2s_s *)dev;
+ 
++
+   if (priv->config->rx_en)
+     {
+       struct esp32s3_buffer_s *bfcontainer;
+@@ -2877,6 +3154,14 @@ static int i2s_receive(struct i2s_dev_s *dev, struct ap_buffer_s *apb,
+ 
+       nbytes = MIN(nbytes, ESP32S3_DMA_BUFLEN_MAX);
+ 
++      /* VelaPaw patch #9: the alignment above happens BEFORE the clamp, so
++       * clamping 8192 to ESP32S3_DMA_BUFLEN_MAX yields 4095 -- an odd byte
++       * count that lands in I2S_RX_EOF_NUM and can never be reached by
++       * whole 16-bit samples.  Re-align after clamping (-> 4092).
++       */
++
++      nbytes &= ~UINT32_C(3);
++
+       /* Allocate a buffer container in advance */
+ 
+       bfcontainer = i2s_buf_allocate(priv);
+@@ -2907,6 +3192,14 @@ static int i2s_receive(struct i2s_dev_s *dev, struct ap_buffer_s *apb,
+       bfcontainer->nbytes   = nbytes;
+       bfcontainer->result   = -EBUSY;
+ 
++      /* VelaPaw patch #11: es8311.c contains no I2S_IOCTL call at all, so
++       * AUDIOIOC_START never reaches this lower half and priv->streaming
++       * stays false -- which makes i2s_rx_worker stamp every buffer
++       * AUDIO_APB_FINAL and kill the capture after one block.
++       */
++
++      priv->streaming = true;
++
+       ret = i2s_rxdma_setup(priv, bfcontainer);
+ 
+       if (ret != OK)
+diff --git a/drivers/audio/es8311.c b/drivers/audio/es8311.c
+index 33b89476b9b..bc44ff9bca2 100644
+--- a/drivers/audio/es8311.c
++++ b/drivers/audio/es8311.c
+@@ -44,6 +44,7 @@
+ 
+ #include <nuttx/audio/audio.h>
+ #include <nuttx/audio/es8311.h>
++#include <nuttx/mutex.h>
+ #include <nuttx/audio/i2s.h>
+ #include <nuttx/clock.h>
+ #include <nuttx/fs/fs.h>
+@@ -1042,13 +1043,13 @@ static int es8311_configure(FAR struct audio_lowerhalf_s *dev,
+         priv->samprate  = caps->ac_controls.hw[0];
+         priv->bpsamp    = caps->ac_controls.b[2];
+ 
+-        ret = es8311_setsamplerate(priv) == -ENOTTY ? OK : ret;
++        ret = es8311_setsamplerate(priv); if (ret == -ENOTTY) ret = OK;
+         if (ret < 0)
+           {
+             break;
+           }
+ 
+-        ret = es8311_setbitspersample(priv) == -ENOTTY ? OK : ret;
++        ret = es8311_setbitspersample(priv); if (ret == -ENOTTY) ret = OK;
+       }
+       break;
+ 
+@@ -1089,13 +1090,13 @@ static int es8311_configure(FAR struct audio_lowerhalf_s *dev,
+         priv->samprate  = caps->ac_controls.hw[0];
+         priv->bpsamp    = caps->ac_controls.b[2];
+ 
+-        ret = es8311_setsamplerate(priv) == -ENOTTY ? OK : ret;
++        ret = es8311_setsamplerate(priv); if (ret == -ENOTTY) ret = OK;
+         if (ret != OK)
+           {
+             break;
+           }
+ 
+-        ret = es8311_setbitspersample(priv) == -ENOTTY ? OK : ret;
++        ret = es8311_setbitspersample(priv); if (ret == -ENOTTY) ret = OK;
+       }
+       break;
+ 
+@@ -1439,7 +1440,7 @@ static int es8311_start(FAR struct audio_lowerhalf_s *dev)
+   ret |= es8311_writereg(priv, ES8311_ADC_REG17,    0xbf);
+   ret |= es8311_writereg(priv, ES8311_SYSTEM_REG0E, 0x02);
+   ret |= es8311_writereg(priv, ES8311_SYSTEM_REG12, 0x00);
+-  ret |= es8311_writereg(priv, ES8311_SYSTEM_REG14, 0x1a);
++  ret |= es8311_writereg(priv, ES8311_SYSTEM_REG14, 0x18);
+ 
+   ret |= es8311_writereg(priv, ES8311_SYSTEM_REG0D, 0x01);
+   ret |= es8311_writereg(priv, ES8311_ADC_REG15,    0x40);
+@@ -2159,7 +2160,7 @@ static void es8311_reset(FAR struct es8311_dev_s *priv)
+   es8311_writereg(priv, ES8311_CLK_MANAGER_REG01, 0x30);
+   es8311_writereg(priv, ES8311_CLK_MANAGER_REG02, 0x00);
+   es8311_writereg(priv, ES8311_CLK_MANAGER_REG03, 0x10);
+-  es8311_writereg(priv, ES8311_ADC_REG16,         0x24);
++  es8311_writereg(priv, ES8311_ADC_REG16,         0x20);
+   es8311_writereg(priv, ES8311_CLK_MANAGER_REG04, 0x10);
+   es8311_writereg(priv, ES8311_CLK_MANAGER_REG05, 0x00);
+   es8311_writereg(priv, ES8311_SYSTEM_REG0B,      0x00);

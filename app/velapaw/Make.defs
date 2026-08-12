@@ -1,0 +1,22 @@
+############################################################################
+# VelaPaw - contest 2026 team 043 - Make.defs
+#
+# Registers the app with the NuttX apps build.  Two layouts are in play:
+#
+#   apps/packages/demos/contest2026_043_velapaw  - emulator / CMake tree
+#   apps/examples/velapaw                        - the real ESP32-S3 board
+#
+# Registering a directory that does not exist silently drops the app from
+# CONFIGURED_APPS: `make` then skips it entirely and links against whatever
+# objects are already in libapps.a, with no warning at any point.  That looks
+# exactly like a successful build of unchanged source.  So probe for the
+# directory that is actually present instead of hard-coding one.
+############################################################################
+
+ifneq ($(CONFIG_LVX_USE_DEMO_CONTEST2026_043_VELAPAW),)
+ifneq ($(wildcard $(APPDIR)/examples/velapaw/Makefile),)
+CONFIGURED_APPS += $(APPDIR)/examples/velapaw
+else
+CONFIGURED_APPS += $(APPDIR)/packages/demos/contest2026_043_velapaw
+endif
+endif

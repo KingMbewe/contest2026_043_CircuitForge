@@ -1,0 +1,17 @@
+# generated / large / personal — not committed
+data/*
+!data/README.md
+export/
+__pycache__/
+*.pyc
+*.keras
+*.tflite
+.venv
+data_smoke/
+demo_*.png
+demo_results.png
+
+# training-run debug logs — regenerable, not documentation
+*.log
+*.err
+*.bak
