@@ -157,4 +157,10 @@ esptool --chip esp32s3 --port <串口> write-flash \
 
 ---
 
+## 九、数据集
+
+本项目使用的数据集可在此获取：https://drive.google.com/drive/folders/1-HnbS-VStbKuXCXWK-O1Nh2lNLdqMpbI
+
+---
+
 *由 CircuitForge 队为 2026 首届 openVela AI 硬件开发者大赛打造。*
