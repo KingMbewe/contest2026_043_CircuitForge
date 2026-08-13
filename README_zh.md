@@ -160,5 +160,7 @@ esptool --chip esp32s3 --port <串口> write-flash \
 **进行中：** 语音链路上一个偶发的 I²S 采集卡顿问题尚未完全根因定位，且当前烧录的固件版本是在"跳过某餐"功能与该修复之间二选一的结果（尚未合并到同一个固件镜像，详见 `docs/SESSION_STATE.md`）。
 
 ---
+## 九、数据集
+本项目使用的数据集可在以下链接获取：https://drive.google.com/drive/folders/1-HnbS-VStbKuXCXWK-O1Nh2lNLdqMpbI?usp=sharing
 
 *由 CircuitForge 队为 2026 首届 openVela AI 硬件开发者大赛打造。*
