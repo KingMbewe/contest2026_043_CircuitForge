@@ -15,7 +15,7 @@
 https://github.com/user-attachments/assets/f5fdbb15-c497-48cb-9a41-bf6fdc899202
 
 
-▶ 如果上方的嵌入视频无法加载，可以[直接下载](VelaPaw_Demo.mp4)（58MB，MP4）。
+▶ 如果上方的嵌入视频无法加载，可以[直接下载](VelaPaw_Demo.mp4)（58MB，MP4）。建议您下载视频以获得更好的画质。
 
 ---
 
