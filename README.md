@@ -157,4 +157,10 @@ This project was built end-to-end with AI-assisted (AI Coding) development, and 
 
 ---
 
+## 9. Datasets
+
+Datasets used in this project can be found at: https://drive.google.com/drive/folders/1-HnbS-VStbKuXCXWK-O1Nh2lNLdqMpbI
+
+---
+
 *Built by team CircuitForge for the 2026 openVela AI Hardware Developer Contest.*
