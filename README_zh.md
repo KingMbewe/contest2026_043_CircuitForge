@@ -11,6 +11,10 @@
 
 <!-- TODO: 在 github.com 上直接编辑本文件，把 VelaPaw_Demo.mp4 拖拽进编辑框上传——GitHub 会自动生成一个 CDN 链接，粘贴在此处即可原生内嵌播放。 -->
 
+
+https://github.com/user-attachments/assets/f5fdbb15-c497-48cb-9a41-bf6fdc899202
+
+
 ▶ 如果上方的嵌入视频无法加载，可以[直接下载](VelaPaw_Demo.mp4)（58MB，MP4）。
 
 ---
