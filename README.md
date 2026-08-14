@@ -12,11 +12,7 @@
 <!-- TODO: paste the GitHub-generated CDN URL here after uploading VelaPaw_Demo.mp4 through the GitHub web editor (drag the file into this README's edit box on github.com). GitHub renders it as a native inline player automatically. -->
 
 
-
-
-https://github.com/user-attachments/assets/a639eef1-33c9-4097-a354-4b197974522a
-
-
+https://github.com/user-attachments/assets/1b585c2a-5b61-4356-833e-c6b1f467e004
 
 
 ▶ If the embedded video above doesn't load, [download it directly](VelaPaw_Demo.mp4) (58MB, MP4). We recommend you download the video for better quality.
