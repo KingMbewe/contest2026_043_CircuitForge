@@ -33,7 +33,7 @@ In a multi-pet home, a normal timed feeder can't tell the cats apart, so the gre
 
 - 🐾 **Per-pet identification** — an on-device INT8 neural network recognizes each enrolled pet by face, not by a tag or collar.
 - 🍽️ **Recognition-gated feeding** — a pet is fed only when it is *recognized at the bowl* **and** one of *its* meals is due (and not skipped), at most once per meal per day. Each meal slot has its own **skip-meal** toggle.
-- 🗣️ **Voice-settable schedules** — meal times can be spoken, not just tapped: a MEAL→HOUR→CONFIRM voice dialog, driven by an on-device keyword-spotting model, sets a pet's feeding schedule hands-free. There is no wake word — the dialog is started with a tap in the edit-pet screen, then answered by voice.
+- 🗣️ **Voice-settable schedules** — meal times can be spoken, not just tapped: a MEAL→HOUR→CONFIRM voice dialog, driven by an on-device keyword-spotting model, sets a pet's feeding schedule hands-free. There is no wake word — the dialog is started with a tap in the edit-pet screen, then answered by voice. VelaPaw has no always-listening wake-up feature, so the contest's designated wake-word requirement (§ Participation Rules) does not apply here.
 - ⚖️ **Portion & daily-limit control** — per-pet gram portions with a hard daily cap.
 - 🩺 **Health monitoring** — a second on-device network estimates Body Condition (under / ideal / over), and the feeding-history analytics raise a **sudden-appetite-drop alert**, an early illness sign.
 - 🕑 **Real timekeeping** — a hardware RTC keeps schedules accurate across power loss.
