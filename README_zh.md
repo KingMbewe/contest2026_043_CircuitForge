@@ -4,6 +4,7 @@
 
 **队伍：** CircuitForge（`contest2026_043`） · **赛道：** AI 硬件产品创新
 **平台：** openVela（NuttX），运行于 Waveshare **ESP32-S3-Touch-LCD-3.5-C**
+**代码仓库：** [github.com/open-vela/contest2026_043_CircuitForge](https://github.com/open-vela/contest2026_043_CircuitForge) —— 源码已提交至大赛专属分支 **`dev-ai-contest-2026`**
 
 ---
 

@@ -4,6 +4,7 @@
 
 **Team:** CircuitForge (`contest2026_043`) · **Track:** AI Hardware Product Innovation (AI 硬件产品创新)
 **Platform:** openVela (NuttX) on a Waveshare **ESP32-S3-Touch-LCD-3.5-C**
+**Repository:** [github.com/open-vela/contest2026_043_CircuitForge](https://github.com/open-vela/contest2026_043_CircuitForge) — source code submitted to the contest branch **`dev-ai-contest-2026`**
 
 ---
 
