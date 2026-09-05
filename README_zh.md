@@ -71,6 +71,10 @@ https://github.com/user-attachments/assets/7cf3a67b-49a3-45f4-a800-5e8f92b570e9
                                    （28BYJ-48 步进电机驱动叶轮）
                                                │
                                     记入历史 · 更新趋势 · 体况检测
+                                               │
+                            littlefs（/data）上的 status.md / feed_log.md
+                                               │
+                                  由端侧 ai_agent 读取 —— 见第四节
 ```
 
 中间的那道"门控"正是本作品的核心：只靠识别，会把贪吃的宠物喂上一整天；只靠定时，又会喂到碰巧站在旁边的那只。**两者必须同时满足。**
@@ -80,8 +84,11 @@ https://github.com/user-attachments/assets/7cf3a67b-49a3-45f4-a800-5e8f92b570e9
 - `ui/` —— LVGL 触摸屏界面（登记 · 识别 · 我的宠物 · 趋势）
 - `infer/` —— 推理接口 + TFLite-Micro 后端 + 训练好的模型
 - `identity/` —— 登记存储、余弦匹配器、逐宠物闪存持久化、宠物头像
-- `store/` —— 进食历史与行为分析
+- `store/` —— 进食历史与行为分析；同时写出供 Agent 读取的 Markdown 记录
+- `voice/` —— 关键词识别 + MEAL→HOUR→CONFIRM 语音排餐对话
 - `hal/` —— 摄像头（OV5640）与投料机构（28BYJ-48 步进电机）的硬件抽象
+
+**Agent 层**（[`agent/`](agent/)）—— 自定义 Skill、心跳任务清单，以及针对 `packages/ai_agent` 的三个补丁。它位于成型投喂器*之上*：只读取 `store/` 写出的记录，从不参与任何投喂决策。详见[第四节](#四端侧-ai-agent唯一需要联网的部分)。
 
 **板级支持**（[`board/`](board/)）—— 自定义板文件驱动显示屏、通过 ESP32-S3 LCD_CAM 外设驱动 OV5640 摄像头、通过 I²C 驱动 PCF85063 RTC，并经 ULN2003 用四个 GPIO 驱动投料的 **28BYJ-48 步进电机**（IN1–IN3/IN4 用 GPIO9/10/11/**43**）。显示屏运行于 **40 MHz 硬件 SPI + DMA**。ES8311 音频编解码器独占的 I²S 总线（GPIO12–16，未接到任何排针）驱动板载麦克风与扬声器，用于语音设置时间表。
 
