@@ -32,6 +32,7 @@ In a multi-pet home, a normal timed feeder can't tell the cats apart, so the gre
 - 🗣️ **Voice-settable schedules** — meal times can be spoken, not just tapped: a MEAL→HOUR→CONFIRM voice dialog, driven by an on-device keyword-spotting model, sets a pet's feeding schedule hands-free. There is no wake word — the dialog is started with a tap in the edit-pet screen, then answered by voice. VelaPaw has no always-listening wake-up feature, so the contest's designated wake-word requirement (§ Participation Rules) does not apply here.
 - ⚖️ **Portion & daily-limit control** — per-pet gram portions with a hard daily cap.
 - 🩺 **Health monitoring** — a second on-device network estimates Body Condition (under / ideal / over), and the feeding-history analytics raise a **sudden-appetite-drop alert**, an early illness sign.
+- 🤖 **On-device AI agent that speaks up first** — the openVela `ai_agent` framework runs on the board with a custom Skill that reads the *real* feeding records. On a timer it **pushes a warning by itself** when a pet crosses a concern threshold — unprompted, with nobody at the console. A quiet device means nothing is wrong. See [§4](#4-the-on-device-ai-agent-the-one-part-that-needs-internet).
 - 🕑 **Real timekeeping** — a hardware RTC keeps schedules accurate across power loss.
 - 🌐 **Bilingual UI** — English / 中文, with a live in-app language toggle.
 - 💾 **Everything persists** — enrolled pets, schedules, and pet photos survive a power cut.
