@@ -6,6 +6,23 @@ here because this repo is the only thing that survives a re-sync.
 
 Always `git apply --check` first — a partial apply is worse than no apply.
 
+Captured from the working build tree on branch `dev-ai-contest-2026`, at:
+
+| Tree | Revision |
+|---|---|
+| `nuttx/` | `e02f581e235` |
+| `apps/` | `e81a73794` |
+
+(`packages/ai_agent` sits at `41723c6`; its patches are indexed in
+[`agent/README.md`](../../agent/README.md).)
+
+Record these because a `--check` failure has two very different causes. On the
+revisions above it means the patch is broken. On any other revision it usually
+just means the upstream file has moved under the patch — re-diff against the
+tree you actually have instead of forcing it. The `nuttx-build-registration`,
+`nuttx-touch-ft5x06` and `apps-mbedtls-isystem` patches touch stable enough
+regions to apply well outside these revisions; the audio patches do not.
+
 ---
 
 ## 1. Required to build (step 2b of [README §7](../../README.md#7-build--run-real-hardware))
