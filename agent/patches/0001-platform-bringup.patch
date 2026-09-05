@@ -1,0 +1,342 @@
+diff --git a/include/agent_compat.h b/include/agent_compat.h
+index 7565df8..3a8ba0e 100644
+--- a/include/agent_compat.h
++++ b/include/agent_compat.h
+@@ -68,8 +68,6 @@ static inline void* _agent_task_shim(void* p)
+ static inline int agent_task_create(void* (*func)(void*), const char* name,
+     int stack_size, void* arg, int prio)
+ {
+-    (void)name;
+-
+     _agent_task_args_t* ta = malloc(sizeof(_agent_task_args_t));
+     if (!ta)
+         return ERROR;
+@@ -81,17 +79,28 @@ static inline int agent_task_create(void* (*func)(void*), const char* name,
+     pthread_attr_init(&attr);
+     pthread_attr_setstacksize(&attr, (size_t)(stack_size < 4096 ? 4096 : stack_size));
+ 
+-    /* Set thread priority via SCHED_FIFO (NuttX supports this) */
+-    struct sched_param sp;
+-    sp.sched_priority = prio;
+-    pthread_attr_setschedparam(&attr, &sp);
+-    pthread_attr_setschedpolicy(&attr, SCHED_FIFO);
+-    pthread_attr_setinheritsched(&attr, PTHREAD_EXPLICIT_SCHED);
++    /* llmdbg-sched round 6: isolate whether SCHED_FIFO + explicit-sched on
++     * the agent_loop task specifically is what breaks opendir(). Only this
++     * one named task falls back to default (inherited) scheduling; every
++     * other agent_task_create() caller keeps the original behavior. */
++    if (name && strcmp(name, "agent_loop") == 0) {
++        (void)0;  // DBGOFF: syslog(LOG_INFO, "[llmdbg-sched] agent_loop: using INHERITED sched (round-6 test), prio arg=%d ignored\n", prio);
++        pthread_attr_setinheritsched(&attr, PTHREAD_INHERIT_SCHED);
++    } else {
++        /* Set thread priority via SCHED_FIFO (NuttX supports this) */
++        struct sched_param sp;
++        sp.sched_priority = prio;
++        pthread_attr_setschedparam(&attr, &sp);
++        pthread_attr_setschedpolicy(&attr, SCHED_FIFO);
++        pthread_attr_setinheritsched(&attr, PTHREAD_EXPLICIT_SCHED);
++    }
+ 
+     pthread_t tid;
+     int r = pthread_create(&tid, &attr, _agent_task_shim, ta);
+     pthread_attr_destroy(&attr);
+     if (r != 0) {
++        printf("[agent_task_create] pthread_create FAILED r=%d stack=%d prio=%d\n", r, stack_size, prio);
++        fflush(stdout);
+         free(ta);
+         return ERROR;
+     }
+diff --git a/include/agent_config.h b/include/agent_config.h
+index 711bb6d..ff4949c 100644
+--- a/include/agent_config.h
++++ b/include/agent_config.h
+@@ -116,13 +116,13 @@
+  * a timeout and replies with a user-friendly error message.
+  * The socket-level SO_RCVTIMEO (AGENT_LLM_SOCKET_TIMEOUT_SEC)
+  * acts as the hard backstop that actually unblocks the read. */
+-#define AGENT_LLM_TIMEOUT_SEC 60
++#define AGENT_LLM_TIMEOUT_SEC 420
+ 
+ /* Socket-level read timeout applied via SO_RCVTIMEO in vela_tls.
+  * Must be >= AGENT_LLM_TIMEOUT_SEC to allow the agent-level
+  * watchdog to fire first on normal slow responses.  Set higher
+  * to cover TLS handshake + full response read. */
+-#define AGENT_LLM_SOCKET_TIMEOUT_SEC 120
++#define AGENT_LLM_SOCKET_TIMEOUT_SEC 480
+ 
+ /* ── Timezone (POSIX TZ format) ────────────────────────────── */
+ #define AGENT_TIMEZONE "CST-8"
+@@ -139,6 +139,14 @@
+ #define AGENT_LLM_API_VERSION "openai"
+ #define AGENT_LLM_MAX_RETRIES 3
+ #define AGENT_LLM_RETRY_BASE_SEC 2
++
++/* Extra attempts for a transport-level HTTP failure (no status line
++ * came back at all), as opposed to AGENT_LLM_MAX_RETRIES above, which
++ * counts retries of a request the server answered with 429.  The two
++ * are separate because they recover from different things: a 429 says
++ * "wait and ask again", a dead socket says "that connection is gone".
++ */
++#define AGENT_LLM_HTTP_MAX_RETRIES 2
+ #define AGENT_LLM_STREAM_BUF_SIZE (8 * 1024)
+ #define AGENT_LLM_MAX_RESP_SIZE \
+     (512 * 1024) /* hard cap for growable resp buffer */
+@@ -161,7 +169,8 @@
+ /* ── Message Bus ────────────────────────────────────────────── */
+ #define AGENT_BUS_QUEUE_LEN 16
+ #define AGENT_BUS_PUSH_TIMEOUT_MS 5000
+-#define AGENT_OUTBOUND_STACK (16 * 1024)
++#define AGENT_OUTBOUND_STACK (4 * 1024)
++#define AGENT_NETWATCH_STACK (16 * 1024)
+ #define AGENT_OUTBOUND_PRIO 50
+ #define AGENT_OUTBOUND_CORE 0
+ 
+@@ -171,13 +180,18 @@
+ /* ── Cron / Heartbeat ──────────────────────────────────────── */
+ #define AGENT_CRON_FILE AGENT_DATA_DIR "/cron.json"
+ #define AGENT_CRON_FILE_MAX_SIZE (8 * 1024)
+-#define AGENT_CRON_MAX_JOBS 16
++#define AGENT_CRON_MAX_JOBS 4
+ #define AGENT_CRON_CHECK_INTERVAL_MS (10 * 1000)
+ #define AGENT_CRON_ID_LEN 9 /* 8 hex chars + NUL */
+ #define AGENT_CRON_STACK (8 * 1024)
+ #define AGENT_CRON_PRIO 40
+ #define AGENT_HEARTBEAT_FILE AGENT_DATA_DIR "/HEARTBEAT.md"
+ #define AGENT_HEARTBEAT_INTERVAL_MS (30 * 60 * 1000)
++/* The chat_id heartbeat_send() stamps on its message. agent_loop.c matches
++ * on it to keep the heartbeat out of the response cache, so the two must
++ * agree -- hence a shared macro rather than the literal in both files.
++ */
++#define AGENT_HEARTBEAT_CHAT_ID "heartbeat"
+ 
+ /* ── Skills ─────────────────────────────────────────────────── */
+ #define AGENT_SKILLS_DIR AGENT_DATA_DIR "/skills/"
+@@ -228,8 +242,8 @@
+ #define AGENT_WS_CLIENT_STACK (12 * 1024)
+ 
+ /* ── Serial CLI ─────────────────────────────────────────────── */
+-#define AGENT_CLI_STACK (16 * 1024)
+-#define AGENT_CLI_PRIO 30
++#define AGENT_CLI_STACK (8 * 1024)
++#define AGENT_CLI_PRIO 70
+ #define AGENT_CLI_CORE 0
+ 
+ /* ── Config store keys (config store key strings) ─── */
+diff --git a/src/agent_main.c b/src/agent_main.c
+index 9d676c2..4ab0e88 100644
+--- a/src/agent_main.c
++++ b/src/agent_main.c
+@@ -424,7 +424,7 @@ static void* outbound_dispatch_task(void* arg)
+             weixin_channel_send(uid, ctx, msg.content);
+ #endif
+         } else if (strcmp(msg.channel, AGENT_CHAN_SYSTEM) == 0) {
+-            syslog(LOG_INFO, "[%s] System message [%s]: %.128s\n", TAG, msg.chat_id, msg.content);
++            syslog(LOG_INFO, "[%s] System message [%s]: %.512s\n", TAG, msg.chat_id, msg.content);
+ #ifdef CONFIG_FEATURE_SYSTEM_VELACLAW
+         } else if (strcmp(msg.channel, AGENT_CHAN_QUICKAPP) == 0) {
+             quickapp_mq_dispatch(msg.chat_id, msg.content);
+@@ -490,41 +490,53 @@ int ai_agent_main(int argc, char* argv[])
+     /* ── Phase 0: Storage Bootstrapping (Auto-mount & Mkdir) ── */
+ 
+     struct stat st;
+-    if (stat("/data", &st) != 0) {
++    (void)0;  // DBGOFF: printf("[agent-dbg] before stat root\n"); fflush(stdout);
++    int st_root = stat("/", &st);
++    (void)0;  // DBGOFF: printf("[agent-dbg] stat(/)=%d\n", st_root); fflush(stdout);
++    (void)0;  // DBGOFF: printf("[agent-dbg] before stat tmp\n"); fflush(stdout);
++    int st_tmp = stat("/tmp", &st);
++    (void)0;  // DBGOFF: printf("[agent-dbg] stat(/tmp)=%d\n", st_tmp); fflush(stdout);
++    (void)0;  // DBGOFF: printf("[agent-dbg] before stat\n"); fflush(stdout);
++    int st_ret = stat("/data", &st);
++    (void)0;  // DBGOFF: printf("[agent-dbg] stat(/data)=%d\n", st_ret); fflush(stdout);
++    if (st_ret != 0) {
+         syslog(LOG_INFO, "[%s] Mounting /data as tmpfs for simulation...\n", TAG);
+-        mount(NULL, "/data", "tmpfs", 0, NULL);
++        int mret = mount(NULL, "/data", "tmpfs", 0, NULL);
++        (void)0;  // DBGOFF: printf("[agent-dbg] mount()=%d\n", mret); fflush(stdout);
+     }
+ 
+     /* Ensure directory structure exists (No more manual mkdir needed!) */
+-    mkdir("/data/agent", 0755);
+-    mkdir("/data/agent/config", 0755);
+-    mkdir("/data/agent/memory", 0755);
+-    mkdir("/data/agent/sessions", 0755);
+-    mkdir("/data/agent/skills", 0755);
++    (void)0;  // DBGOFF: printf("[agent-dbg] mkdir agent=%d\n", mkdir("/data/agent", 0755)); fflush(stdout);
++    (void)0;  // DBGOFF: printf("[agent-dbg] mkdir config=%d\n", mkdir("/data/agent/config", 0755)); fflush(stdout);
++    (void)0;  // DBGOFF: printf("[agent-dbg] mkdir memory=%d\n", mkdir("/data/agent/memory", 0755)); fflush(stdout);
++    (void)0;  // DBGOFF: printf("[agent-dbg] mkdir sessions=%d\n", mkdir("/data/agent/sessions", 0755)); fflush(stdout);
++    (void)0;  // DBGOFF: printf("[agent-dbg] mkdir skills=%d\n", mkdir("/data/agent/skills", 0755)); fflush(stdout);
+     BOOT_LOG(&t0, "P0", "storage ready");
+-
+-    /* Memory info */
+-    {
+-        struct mallinfo mi = mallinfo();
+-        syslog(LOG_INFO, "[%s] [boot +%ldms] heap: arena=%d free=%d used=%d\n",
+-            TAG, boot_ms(&t0), mi.arena, mi.fordblks, mi.uordblks);
+-    }
++    (void)0;  // DBGOFF: printf("[agent-dbg] mallinfo SKIPPED\n"); fflush(stdout);
+ 
+     /* ── Phase 1: Core infrastructure ──────────────────────── */
+     {
+         int rc;
++        (void)0;  // DBGOFF: printf("[agent-dbg] before config_store_init\n"); fflush(stdout);
+         rc = config_store_init();
++        (void)0;  // DBGOFF: printf("[agent-dbg] after config_store_init rc=%d\n", rc); fflush(stdout);
+         BOOT_LOG_RC(&t0, "P1", "config_store_init", rc);
+ 
++        (void)0;  // DBGOFF: printf("[agent-dbg] before message_bus_init\n"); fflush(stdout);
+         rc = message_bus_init();
++        (void)0;  // DBGOFF: printf("[agent-dbg] after message_bus_init rc=%d\n", rc); fflush(stdout);
+         BOOT_LOG_RC(&t0, "P1", "message_bus_init", rc);
+         if (rc != OK)
+             return -1;
+ 
++        (void)0;  // DBGOFF: printf("[agent-dbg] before memory_store_init\n"); fflush(stdout);
+         rc = memory_store_init();
++        (void)0;  // DBGOFF: printf("[agent-dbg] after memory_store_init rc=%d\n", rc); fflush(stdout);
+         BOOT_LOG_RC(&t0, "P1", "memory_store_init", rc);
+ 
++        (void)0;  // DBGOFF: printf("[agent-dbg] before session_mgr_init\n"); fflush(stdout);
+         rc = session_mgr_init();
++        (void)0;  // DBGOFF: printf("[agent-dbg] after session_mgr_init rc=%d\n", rc); fflush(stdout);
+         BOOT_LOG_RC(&t0, "P1", "session_mgr_init", rc);
+     }
+ 
+@@ -684,7 +696,7 @@ int ai_agent_main(int argc, char* argv[])
+ 
+     /* Network watcher thread: reconnect + wait + start net services */
+     if (agent_task_create(network_watch_task, "net_watch",
+-            AGENT_OUTBOUND_STACK, NULL,
++            AGENT_NETWATCH_STACK, NULL,
+             AGENT_OUTBOUND_PRIO)
+         != OK) {
+         syslog(LOG_WARNING, "[%s] Failed to start network_watch thread\n", TAG);
+diff --git a/src/core/agent_mem.h b/src/core/agent_mem.h
+index c569f77..1c63814 100644
+--- a/src/core/agent_mem.h
++++ b/src/core/agent_mem.h
+@@ -47,12 +47,28 @@ typedef struct {
+ /**
+  * Query current heap memory status via mallinfo().
+  */
++/* mallinfo() walks the heap free lists while holding the heap lock.  On this
++ * ESP32-S3 config (PSRAM + a separate IMEM heap) the walk reads a bogus node
++ * size and never terminates: a bare `free` on a freshly booted board with
++ * nothing running hangs the console, and every later malloc then deadlocks
++ * behind the lock mallinfo still holds.  agent_loop_task() called this as its
++ * very first statement, which is what killed the whole chip on `ask`.  The
++ * boot path already skips mallinfo for the same reason.
++ *
++ * The heap itself is healthy -- only enumerating it is broken -- so report a
++ * fixed budget instead.  NOTE: these are ASSUMED values, not measured; the
++ * "free heap" figure in the agent log is therefore not a real reading.
++ * Over-asking still degrades safely: every allocation site checks for NULL
++ * and falls back. */
++
++#define AGENT_MEM_ASSUMED_ARENA (8u * 1024 * 1024)
++#define AGENT_MEM_ASSUMED_FREE (1u * 1024 * 1024)
++
+ static inline void agent_mem_get_status(agent_mem_status_t* st)
+ {
+-    struct mallinfo mi = mallinfo();
+-    st->total_heap = mi.arena;
+-    st->free_heap = mi.fordblks;
+-    st->largest_block = mi.fordblks; /* conservative estimate */
++    st->total_heap = AGENT_MEM_ASSUMED_ARENA;
++    st->free_heap = AGENT_MEM_ASSUMED_FREE;
++    st->largest_block = AGENT_MEM_ASSUMED_FREE;
+ }
+ 
+ /**
+diff --git a/src/infra/network_manager.c b/src/infra/network_manager.c
+index 00cc296..1acbc59 100644
+--- a/src/infra/network_manager.c
++++ b/src/infra/network_manager.c
+@@ -850,7 +850,7 @@ int network_wifi_connect(const char* iface, const char* ssid,
+      * handle the timeout. */
+     {
+         bool associated = true;
+-        snprintf(cmd, sizeof(cmd), "wapi status %s", dev);
++        snprintf(cmd, sizeof(cmd), "wapi show %s", dev);
+         FILE* fp = popen(cmd, "r");
+         if (fp) {
+             char line[256];
+diff --git a/src/infra/vela_tls.c b/src/infra/vela_tls.c
+index 0b36760..64e3392 100644
+--- a/src/infra/vela_tls.c
++++ b/src/infra/vela_tls.c
+@@ -476,6 +476,7 @@ static int tls_write_request(tls_ctx_t* ctx,
+         }
+     }
+ 
++    syslog(LOG_INFO, "[%s] REQ written: hdr=%d body=%zu\n", TAG, pos, body_len);
+     return 0;
+ }
+ 
+@@ -490,7 +491,7 @@ static int tls_write_request(tls_ctx_t* ctx,
+  * Each buffer is 8KB; pool=1 uses 1 buffer, pool>=2 uses 2. */
+ #define TLS_RAW_BUF_COUNT (CONN_POOL_SIZE < 2 ? 1 : 2)
+ 
+-static char s_tls_raw_buf[TLS_RAW_BUF_COUNT][TLS_RAW_BUF_SIZE];
++static char *s_tls_raw_buf[TLS_RAW_BUF_COUNT];
+ static pthread_mutex_t s_tls_raw_lock[TLS_RAW_BUF_COUNT];
+ static pthread_once_t s_tls_raw_once = PTHREAD_ONCE_INIT;
+ 
+@@ -498,6 +499,7 @@ static void tls_raw_init_once(void)
+ {
+     for (int i = 0; i < TLS_RAW_BUF_COUNT; i++) {
+         pthread_mutex_init(&s_tls_raw_lock[i], NULL);
++        s_tls_raw_buf[i] = malloc(TLS_RAW_BUF_SIZE);
+     }
+ }
+ 
+@@ -552,6 +554,7 @@ static int tls_read_response(tls_ctx_t* ctx, char* resp_buf, size_t resp_cap,
+         }
+     }
+     raw[raw_len] = '\0';
++    syslog(LOG_INFO, "[%s] RESP hdr in: %zu bytes\n", TAG, raw_len);
+ 
+     /* Parse status line */
+     int http_status = 0;
+@@ -613,6 +616,15 @@ static int tls_read_response(tls_ctx_t* ctx, char* resp_buf, size_t resp_cap,
+         while (resp_pos < resp_cap - 1) {
+             if (content_length >= 0 && (long)resp_pos >= content_length)
+                 break;
++            /* Chunked responses carry no Content-Length, so the check
++             * above can never fire.  Stop at the chunked terminator
++             * (final 0-length chunk); without this the loop blocks until
++             * the server's idle close -- measured at 240s per LLM call
++             * against api.deepseek.com. */
++            if (chunked && resp_pos >= 5
++                && (memmem(resp_buf, resp_pos, "\r\n0\r\n\r\n", 7) != NULL
++                    || memcmp(resp_buf, "0\r\n\r\n", 5) == 0))
++                break;
+             ret = mbedtls_ssl_read(&ctx->ssl,
+                 (unsigned char*)(resp_buf + resp_pos),
+                 resp_cap - 1 - resp_pos);
+@@ -635,6 +647,8 @@ static int tls_read_response(tls_ctx_t* ctx, char* resp_buf, size_t resp_cap,
+         resp_buf[resp_pos] = '\0';
+     }
+ 
++    syslog(LOG_INFO, "[%s] RESP body done: %zu bytes cl=%ld chunked=%d\n",
++           TAG, resp_pos, content_length, chunked);
+     if (out_body_len)
+         *out_body_len = resp_pos;
+ 
+@@ -980,6 +994,15 @@ int vela_http_post_json(const char* host, const char* port, const char* path,
+         while (resp_pos < resp_cap - 1) {
+             if (content_length >= 0 && (long)resp_pos >= content_length)
+                 break;
++            /* Chunked responses carry no Content-Length, so the check
++             * above can never fire.  Stop at the chunked terminator
++             * (final 0-length chunk); without this the loop blocks until
++             * the server's idle close -- measured at 240s per LLM call
++             * against api.deepseek.com. */
++            if (chunked && resp_pos >= 5
++                && (memmem(resp_buf, resp_pos, "\r\n0\r\n\r\n", 7) != NULL
++                    || memcmp(resp_buf, "0\r\n\r\n", 5) == 0))
++                break;
+             ssize_t n = read(fd, resp_buf + resp_pos, resp_cap - 1 - resp_pos);
+             if (n <= 0)
+                 break;

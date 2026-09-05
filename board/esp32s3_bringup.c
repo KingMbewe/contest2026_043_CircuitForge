@@ -27,6 +27,7 @@
 #include <nuttx/config.h>
 
 #include <stdio.h>
+#include <malloc.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <syslog.h>
@@ -41,6 +42,7 @@
 #include <nuttx/fs/fs.h>
 #include <nuttx/himem/himem.h>
 #include <arch/board/board.h>
+#include <nuttx/board.h>
 
 #ifdef CONFIG_ESP32S3_TIMER
 #  include "esp32s3_board_tim.h"
@@ -197,6 +199,24 @@ int esp32s3_bringup(void)
   bool i2s_enable_rx;
 #endif
 
+#ifdef CONFIG_FS_TMPFS
+  /* Mount the tmpfs file system */
+
+  ret = nx_mount(NULL, CONFIG_LIBC_TMPDIR, "tmpfs", 0, NULL);
+  if (ret < 0)
+    {
+      syslog(LOG_ERR, "ERROR: Failed to mount tmpfs at %s: %d\n",
+             CONFIG_LIBC_TMPDIR, ret);
+    }
+
+  /* /data is mounted as littlefs by board_spiflash_init() further down
+   * this function, on the CONFIG_ESP32S3_STORAGE_MTD_OFFSET/_SIZE MTD
+   * partition. The tmpfs-at-/data mount that used to be here (2026-08-26
+   * ai_agent attempt) was removed 2026-09-01: it raced/shadowed the real
+   * mount depending on order and meant /data never survived a reboot.
+   */
+#endif
+
 #if defined(CONFIG_ESP32S3_SPIRAM) && \
     defined(CONFIG_ESP32S3_SPIRAM_BANKSWITCH_ENABLE)
   ret = esp_himem_init();
@@ -290,17 +310,6 @@ int esp32s3_bringup(void)
     }
 #endif
 
-#ifdef CONFIG_FS_TMPFS
-  /* Mount the tmpfs file system */
-
-  ret = nx_mount(NULL, CONFIG_LIBC_TMPDIR, "tmpfs", 0, NULL);
-  if (ret < 0)
-    {
-      syslog(LOG_ERR, "ERROR: Failed to mount tmpfs at %s: %d\n",
-             CONFIG_LIBC_TMPDIR, ret);
-    }
-#endif
-
 #ifdef CONFIG_ESP32S3_LEDC
   ret = esp32s3_pwm_setup();
   if (ret < 0)
@@ -334,6 +343,39 @@ int esp32s3_bringup(void)
       syslog(LOG_ERR, "ERROR: Failed to initialize partition error=%d\n",
              ret);
     }
+#endif
+
+#ifdef CONFIG_ESP32S3_WIRELESS
+
+#ifdef CONFIG_ESP32S3_WIFI_BT_COEXIST
+  ret = esp32s3_wifi_bt_coexist_init();
+  if (ret)
+    {
+      syslog(LOG_ERR, "ERROR: Failed to initialize Wi-Fi and BT coexist\n");
+    }
+#endif
+
+#ifdef CONFIG_ESP32S3_BLE
+  ret = esp32s3_ble_initialize();
+  if (ret)
+    {
+      syslog(LOG_ERR, "ERROR: Failed to initialize BLE\n");
+    }
+#endif
+
+#ifdef CONFIG_ESP32S3_WIFI
+  ret = board_wlan_init();
+  if (ret < 0)
+    {
+      syslog(LOG_ERR, "ERROR: Failed to initialize wireless subsystem=%d\n",
+             ret);
+    }
+#endif
+
+#ifdef CONFIG_USBDEV_COMPOSITE
+  board_composite_connect(0, 0);
+#endif
+
 #endif
 
 #ifdef CONFIG_ESP32S3_RT_TIMER
@@ -519,35 +561,6 @@ int esp32s3_bringup(void)
     }
 #endif
 
-#ifdef CONFIG_ESP32S3_WIRELESS
-
-#ifdef CONFIG_ESP32S3_WIFI_BT_COEXIST
-  ret = esp32s3_wifi_bt_coexist_init();
-  if (ret)
-    {
-      syslog(LOG_ERR, "ERROR: Failed to initialize Wi-Fi and BT coexist\n");
-    }
-#endif
-
-#ifdef CONFIG_ESP32S3_BLE
-  ret = esp32s3_ble_initialize();
-  if (ret)
-    {
-      syslog(LOG_ERR, "ERROR: Failed to initialize BLE\n");
-    }
-#endif
-
-#ifdef CONFIG_ESP32S3_WIFI
-  ret = board_wlan_init();
-  if (ret < 0)
-    {
-      syslog(LOG_ERR, "ERROR: Failed to initialize wireless subsystem=%d\n",
-             ret);
-    }
-#endif
-
-#endif
-
 #ifdef CONFIG_ESP32S3_OPENETH
   ret = esp_openeth_initialize();
   if (ret < 0)
@@ -566,6 +579,7 @@ int esp32s3_bringup(void)
 
 #ifdef CONFIG_VIDEO_FB
   ret = fb_register(0, 0);
+  syslog(LOG_ERR, "[bringup] fb_register ret=%d\n", ret);
   if (ret < 0)
     {
       syslog(LOG_ERR, "ERROR: Failed to initialize Frame Buffer Driver.\n");

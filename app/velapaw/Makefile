@@ -13,7 +13,14 @@ PRIORITY  = SCHED_PRIORITY_DEFAULT
 # the Enroll "Capture" button (recognition gets its own 32K worker thread, but
 # capture does not). 32768 has to cover LVGL *plus* inference; that is too tight
 # and wedged the board on capture. Keep this well clear of both.
-STACKSIZE = 131072
+#
+# Reduced 131072 -> 49152 on 2026-08-26 for the ai_agent merge: every task and
+# pthread stack is carved from the XTENSA_IMEM separate heap
+# (CONFIG_XTENSA_IMEM_REGION_SIZE, now 0x48000 = 294912 B), and 131072 here left
+# too little for ai_agent's own task + 6 pthreads -- pthread_create returned
+# ENOMEM (r=12). Must stay in step with VELAPAW_AUTOSTART_STACK in
+# boards/xtensa/esp32s3/esp32s3-devkit/src/esp32s3_appinit.c.
+STACKSIZE = 49152
 MODULE    = $(CONFIG_LVX_USE_DEMO_CONTEST2026_043_VELAPAW)
 
 VELAPAW_DIR  = $(APPDIR)/examples/velapaw
