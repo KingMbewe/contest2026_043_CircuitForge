@@ -71,6 +71,10 @@ Both models were trained off-device with the pipeline in [`host/`](host/) (Tenso
                                        (28BYJ-48 stepper, paddle rotor)
                                                    │
                                         log to history · update trends · BCS check
+                                                   │
+                                  status.md / feed_log.md on littlefs (/data)
+                                                   │
+                                     read by the on-device ai_agent — see §4
 ```
 
 The gate in the middle is the whole idea: recognition alone would feed a greedy pet all day; a timer alone would feed whichever animal happened to be standing there. **Both must agree.**
@@ -80,8 +84,11 @@ The gate in the middle is the whole idea: recognition alone would feed a greedy 
 - `ui/` — LVGL touchscreen UI (Enroll · Recognize · My Pets · Trends)
 - `infer/` — inference interface + the TFLite-Micro backend + the trained models
 - `identity/` — enrollment store, cosine matcher, per-pet flash persistence, pet photos
-- `store/` — feeding history & behavior analytics
+- `store/` — feeding history & behavior analytics; also writes the Markdown records the agent reads
+- `voice/` — keyword spotting + the MEAL→HOUR→CONFIRM meal-scheduling dialog
 - `hal/` — camera (OV5640) and feeder (28BYJ-48 stepper) hardware abstraction
+
+**Agent layer** ([`agent/`](agent/)) — the custom Skill, the heartbeat task list, and the patches against `packages/ai_agent`. It sits *on top of* the finished feeder: it reads the records `store/` writes and never takes part in a feeding decision. See [§4](#4-the-on-device-ai-agent-the-one-part-that-needs-internet).
 
 **Board support** ([`board/`](board/)) — a custom board file drives the display, the OV5640 camera via the ESP32-S3 LCD_CAM peripheral, the PCF85063 RTC over I²C, and the feeder's **28BYJ-48 stepper** through a ULN2003 driver on four GPIOs (IN1–IN3/IN4 on GPIO9/10/11/**43**). The display runs over **hardware SPI at 40 MHz with DMA**. The ES8311 audio codec's private I²S bus (GPIO12–16, not routed to any header) drives the onboard mic and speaker for the voice-settable schedules.
 
