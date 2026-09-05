@@ -126,7 +126,9 @@ app/velapaw/     — the device application (linkfile'd to packages/demos/ by th
 agent/           — the ai_agent layer: custom Skill, heartbeat task, and the
                    patches against packages/ai_agent (see agent/README.md)
 board/           — board files: display/camera/RTC/stepper (esp32s3_st7789.c),
-                   auto-start (esp32s3_appinit.c), and the board defconfig
+                   USB console+network (esp32s3_composite.c), auto-start
+                   (esp32s3_appinit.c), the board defconfig, and the patches
+                   against nuttx/ and apps/ (see board/patches/README.md)
 host/            — off-device model training & export (TensorFlow/Keras)
 hardware/        — 3D-printable feeder (OpenSCAD source + STLs + BOM)
 docs/            — technical notes and benchmark reports
@@ -137,31 +139,62 @@ logs/            — AI-Coding session logs (this project was built with AI assi
 
 ## 7. Build & run (real hardware)
 
+Run every step from the openVela workspace root.
+
 ```bash
 # 1. Pull openVela + this team repo
 repo init -u https://github.com/open-vela/contest2026_043_CircuitForge \
   -b dev-ai-contest-2026 -m contest2026_043_CircuitForge.xml
 repo sync -c -j8
 
-# 2. Place the board files into the ESP32-S3 board tree
+VP=$PWD/contest2026_043_CircuitForge
 BOARD=nuttx/boards/xtensa/esp32s3/esp32s3-devkit
-cp contest2026_043_CircuitForge/board/esp32s3_st7789.c   $BOARD/src/
-cp contest2026_043_CircuitForge/board/esp32s3_appinit.c  $BOARD/src/
-cp contest2026_043_CircuitForge/board/esp32s3_bringup.c  $BOARD/src/
-cp contest2026_043_CircuitForge/board/configs/waveshare_lcd/defconfig \
-   $BOARD/configs/waveshare_lcd/defconfig
 
-# 3. Build (from the openVela workspace root)
+# 2. Place the board files into the ESP32-S3 board tree.
+#    The config directory is new — create it first, or the cp silently fails.
+mkdir -p $BOARD/configs/waveshare_lcd
+cp $VP/board/esp32s3_st7789.c    $BOARD/src/
+cp $VP/board/esp32s3_composite.c $BOARD/src/
+cp $VP/board/esp32s3_appinit.c   $BOARD/src/
+cp $VP/board/esp32s3_bringup.c   $BOARD/src/
+cp $VP/board/configs/waveshare_lcd/defconfig $BOARD/configs/waveshare_lcd/
+
+# 3. Patch the upstream trees. Copying the .c files in is NOT enough — the two
+#    new board sources have to be registered in CSRCS, and several upstream
+#    defects have to be fixed, or the build does not link.
+#    Details: board/patches/README.md and agent/README.md
+(cd nuttx && for p in nuttx-build-registration nuttx-touch-ft5x06 velapaw-audio-nuttx; do
+   git apply --check $VP/board/patches/$p.patch && git apply $VP/board/patches/$p.patch; done)
+(cd apps  && for p in apps-mbedtls-isystem velapaw-audio-apps; do
+   git apply --check $VP/board/patches/$p.patch && git apply $VP/board/patches/$p.patch; done)
+(cd packages/ai_agent && git apply --check $VP/agent/patches/*.patch \
+   && git apply $VP/agent/patches/*.patch)
+
+# 4. Build
 ./build.sh esp32s3-devkit:waveshare_lcd -j8
 
-# 4. Flash firmware + the two on-device models
+# 5. Flash firmware + the two on-device models
 esptool --chip esp32s3 --port <PORT> write-flash \
   0x0        nuttx/nuttx.bin \
-  0x600000   contest2026_043_CircuitForge/app/velapaw/infer/model/velapaw.tflite \
-  0x760000   contest2026_043_CircuitForge/app/velapaw/infer/model/bcs.tflite
+  0x600000   $VP/app/velapaw/infer/model/velapaw.tflite \
+  0x760000   $VP/app/velapaw/infer/model/bcs.tflite
 ```
 
+**6. Provision the agent's data files — once per board.** The custom Skill and
+the heartbeat task list are runtime files on the board's littlefs, not build
+inputs, so nothing above installs them: write `agent/skills/velapaw-feeding-digest.md`
+to `/data/ai_agent/skills/` and `agent/HEARTBEAT.md` to `/data/ai_agent/`. They
+survive reboots and reflashes, because `/data` starts at `0x180000` and step 5
+writes only up to ~`0x17ec80`. The procedure and its two gotchas are in
+[`agent/README.md` §1](agent/README.md). Skip this and the feeder still works —
+only the agent's proactive push has nothing to read.
+
 On boot the device runs the feeder UI directly. **Enroll a pet** (capture a few tight, well-lit face photos), then the **Recognize** tab identifies it and feeds on schedule.
+
+> **Note on the audio patch:** `velapaw-audio-nuttx.patch` carries per-buffer
+> `VP: mic` / `VP: RXDUMP` diagnostics alongside the fixes. They are noisy on the
+> console and worth stripping for anything but bring-up — see the "Strip before
+> shipping" section of [`board/patches/README.md`](board/patches/README.md).
 
 > **Note on inference speed:** the ~1.3 s figure uses the ESP-NN accelerated kernels. See the [engineering deep-dive](docs/ENGINEERING.md) for the acceleration setup, the hardware-SPI display debug, and reproducibility notes.
 

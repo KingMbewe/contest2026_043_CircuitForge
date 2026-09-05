@@ -127,7 +127,9 @@ app/velapaw/     — 设备端应用（由 manifest 通过 linkfile 映射到 pa
 agent/           — ai_agent 层：自定义 Skill、心跳任务，以及针对
                    packages/ai_agent 的补丁（详见 agent/README.md）
 board/           — 板文件：显示/摄像头/RTC/步进电机（esp32s3_st7789.c）、
-                   开机自启（esp32s3_appinit.c）以及板级 defconfig
+                   USB 控制台+网络（esp32s3_composite.c）、开机自启
+                   （esp32s3_appinit.c）、板级 defconfig，以及针对 nuttx/ 与
+                   apps/ 的补丁（详见 board/patches/README.md）
 host/            — 设备外的模型训练与导出（TensorFlow/Keras）
 hardware/        — 可 3D 打印的投料器（OpenSCAD 源文件 + STL + 物料清单）
 docs/            — 技术说明与基准测试报告
@@ -138,31 +140,60 @@ logs/            — AI Coding 会话日志（本项目借助 AI 辅助开发完
 
 ## 七、编译与运行（真机）
 
+以下所有步骤均在 openVela 工作区根目录下执行。
+
 ```bash
 # 1. 拉取 openVela 与本队仓库
 repo init -u https://github.com/open-vela/contest2026_043_CircuitForge \
   -b dev-ai-contest-2026 -m contest2026_043_CircuitForge.xml
 repo sync -c -j8
 
-# 2. 将板文件放入 ESP32-S3 板级目录
+VP=$PWD/contest2026_043_CircuitForge
 BOARD=nuttx/boards/xtensa/esp32s3/esp32s3-devkit
-cp contest2026_043_CircuitForge/board/esp32s3_st7789.c   $BOARD/src/
-cp contest2026_043_CircuitForge/board/esp32s3_appinit.c  $BOARD/src/
-cp contest2026_043_CircuitForge/board/esp32s3_bringup.c  $BOARD/src/
-cp contest2026_043_CircuitForge/board/configs/waveshare_lcd/defconfig \
-   $BOARD/configs/waveshare_lcd/defconfig
 
-# 3. 编译（在 openVela 工作区根目录执行）
+# 2. 将板文件放入 ESP32-S3 板级目录。
+#    配置目录是新增的，必须先创建，否则 cp 会静默失败。
+mkdir -p $BOARD/configs/waveshare_lcd
+cp $VP/board/esp32s3_st7789.c    $BOARD/src/
+cp $VP/board/esp32s3_composite.c $BOARD/src/
+cp $VP/board/esp32s3_appinit.c   $BOARD/src/
+cp $VP/board/esp32s3_bringup.c   $BOARD/src/
+cp $VP/board/configs/waveshare_lcd/defconfig $BOARD/configs/waveshare_lcd/
+
+# 3. 给上游代码树打补丁。仅把 .c 文件拷进去是不够的：两个新增板级源文件
+#    必须注册进 CSRCS，另有若干上游缺陷需要修复，否则链接不过。
+#    详见 board/patches/README.md 与 agent/README.md
+(cd nuttx && for p in nuttx-build-registration nuttx-touch-ft5x06 velapaw-audio-nuttx; do
+   git apply --check $VP/board/patches/$p.patch && git apply $VP/board/patches/$p.patch; done)
+(cd apps  && for p in apps-mbedtls-isystem velapaw-audio-apps; do
+   git apply --check $VP/board/patches/$p.patch && git apply $VP/board/patches/$p.patch; done)
+(cd packages/ai_agent && git apply --check $VP/agent/patches/*.patch \
+   && git apply $VP/agent/patches/*.patch)
+
+# 4. 编译
 ./build.sh esp32s3-devkit:waveshare_lcd -j8
 
-# 4. 烧录固件 + 两个端侧模型
+# 5. 烧录固件 + 两个端侧模型
 esptool --chip esp32s3 --port <串口> write-flash \
   0x0        nuttx/nuttx.bin \
-  0x600000   contest2026_043_CircuitForge/app/velapaw/infer/model/velapaw.tflite \
-  0x760000   contest2026_043_CircuitForge/app/velapaw/infer/model/bcs.tflite
+  0x600000   $VP/app/velapaw/infer/model/velapaw.tflite \
+  0x760000   $VP/app/velapaw/infer/model/bcs.tflite
 ```
 
+**6. 写入 Agent 的运行时数据文件 —— 每块板做一次。** 自定义 Skill 与心跳任务清单
+是板上 littlefs 的运行时文件，并非编译输入，上面任何一步都不会安装它们：需把
+`agent/skills/velapaw-feeding-digest.md` 写入 `/data/ai_agent/skills/`，把
+`agent/HEARTBEAT.md` 写入 `/data/ai_agent/`。它们可跨重启、跨重新烧录保留，因为
+`/data` 起始于 `0x180000`，而第 5 步只写到约 `0x17ec80`。具体步骤与两个坑见
+[`agent/README.md` 第 1 节](agent/README.md)。跳过这一步喂食器照常工作，只是
+Agent 的主动推送没有数据可读。
+
 上电后设备直接进入喂食器界面。先在**登记**页录入一只宠物（拍几张贴近、光线良好的正脸照），随后**识别**页即可认出它并按时投喂。
+
+> **关于音频补丁：** `velapaw-audio-nuttx.patch` 在修复之外还带有逐缓冲区的
+> `VP: mic` / `VP: RXDUMP` 诊断输出。除调试外建议剥离，控制台会很吵 ——
+> 见 [`board/patches/README.md`](board/patches/README.md) 的“Strip before
+> shipping”一节。
 
 > **关于推理速度：** 约 1.3 秒的数据基于 ESP-NN 加速算子。加速配置、硬件 SPI 显示调试与可复现性说明见[工程技术详解](docs/ENGINEERING.md)。
 

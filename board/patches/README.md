@@ -1,8 +1,64 @@
-# Audio patches (nuttx / apps)
+# Patches against the upstream trees (nuttx / apps)
 
 These patch **upstream files outside this repo**, so a `repo sync` silently
-reverts them and the audio path stops working with no error. They are kept here
-because this repo is the only thing that survives a re-sync.
+reverts them and the affected path stops working with no error. They are kept
+here because this repo is the only thing that survives a re-sync.
+
+Always `git apply --check` first — a partial apply is worse than no apply.
+
+---
+
+## 1. Required to build (step 2b of [README §7](../../README.md#7-build--run-real-hardware))
+
+Without these three the firmware does not link, or links and comes up with a
+touchscreen that reports rotated coordinates.
+
+| File | Target | Files touched |
+|---|---|---|
+| `nuttx-build-registration.patch` | `nuttx/` | `boards/…/esp32s3-devkit/src/Make.defs`, `boards/xtensa/esp32s3/common/scripts/esp32s3_rom_aliases.ld`, `drivers/syslog/Make.defs` |
+| `nuttx-touch-ft5x06.patch` | `nuttx/` | `drivers/input/ft5x06.c` |
+| `apps-mbedtls-isystem.patch` | `apps/` | `crypto/mbedtls/Make.defs` |
+
+```bash
+cd ~/openvela/nuttx
+for p in nuttx-build-registration nuttx-touch-ft5x06; do
+  P=../contest2026_043_CircuitForge/board/patches/$p.patch
+  git apply --check $P && git apply $P
+done
+
+cd ~/openvela/apps
+P=../contest2026_043_CircuitForge/board/patches/apps-mbedtls-isystem.patch
+git apply --check $P && git apply $P
+```
+
+### What each one fixes
+
+- **`Make.defs`** — the board builds its sources from an explicit `CSRCS` list,
+  and both `esp32s3_st7789.c` and `esp32s3_composite.c` are files this project
+  adds. Without the two `ifeq` blocks neither is ever compiled, and the link
+  fails on `board_lcd_initialize` (called from `esp32s3_bringup.c`) and
+  `board_composite_connect`. Copying the `.c` files into `src/` is not enough.
+- **`esp32s3_rom_aliases.ld`** — the script `PROVIDE`s
+  `cache_invalidate_addr = Cache_Invalidate_Addr`, but nothing in the tree
+  defines `Cache_Invalidate_Addr`; it is expected from the esp-hal ROM scripts
+  that are re-cloned *during* the build. The patch pins it to its ROM address.
+- **`drivers/syslog/Make.defs`** — `ifneq ($(CONFIG_RAMLOG_BUFFER_SECTION),"")`
+  compares against a literal two-character `""` that the variable can never
+  equal, so `-DRAMLOG_BUFFER_SECTION` was defined unconditionally. Matters here
+  because the board runs `CONFIG_RAMLOG_SYSLOG=y`.
+- **`drivers/input/ft5x06.c`** — the panel is mounted rotated relative to the
+  controller's native frame, so raw `(x, y)` arrives transposed; the patch maps
+  it and clamps to 480×320. It also answers `TSIOC_GETMAXPOINTS`, which
+  upstream `lv_nuttx_touchscreen.c` calls and which stock ft5x06 rejects with
+  `-ENOTTY`.
+- **`crypto/mbedtls/Make.defs`** — switches the include flags to `-isystem` so
+  the bundled `mbedtls/*.h` win over any same-named headers already on the
+  search path. This is `packages/ai_agent/fix_esp32s3.sh`'s header-priority
+  fix; without it the agent's TLS does not build.
+
+---
+
+## 2. Audio
 
 Captured 2026-08-03 from the working tree, against a verified-good capture run.
 
@@ -11,8 +67,6 @@ Captured 2026-08-03 from the working tree, against a verified-good capture run.
 | `velapaw-audio-nuttx.patch` | `nuttx/` | `arch/xtensa/src/esp32s3/esp32s3_i2s.c`, `drivers/audio/es8311.c` |
 | `velapaw-audio-apps.patch` | `apps/` | `system/nxlooper/nxlooper.c` |
 
-## Apply
-
 ```bash
 cd ~/openvela/nuttx && git apply --check ../contest2026_043_CircuitForge/board/patches/velapaw-audio-nuttx.patch \
   && git apply ../contest2026_043_CircuitForge/board/patches/velapaw-audio-nuttx.patch
@@ -20,14 +74,12 @@ cd ~/openvela/apps  && git apply --check ../contest2026_043_CircuitForge/board/p
   && git apply ../contest2026_043_CircuitForge/board/patches/velapaw-audio-apps.patch
 ```
 
-`--check` first — a partial apply is worse than no apply.
-
 Note these do **not** cover the esp-hal `LOCK_INITIALIZER_UNLOCKED` → `SP_UNLOCKED`
 fix, which lives in a tree that is re-cloned *during* the build. That one still
 needs `~/fix_vm_patches.sh`, and the ordering is **build → fix → build**, never
 fix → build.
 
-## What's load-bearing
+### What's load-bearing in the audio patches
 
 - **RX TDM slot map** (`i2s_configure`) — `i2s_rxchannels()` is a pure no-op
   upstream, so RX sat at `TOT_CHAN_NUM=0` (one slot per frame) while `RX_CONF1`
@@ -50,7 +102,7 @@ fix → build.
   `nxmutex_lock`/`unlock` become extern calls that can never link, because
   `CONFIG_LIBC_SEM_MUTEX_NOINLINE` is off and they are `static inline`.
 
-## ⚠️ Strip before shipping
+### ⚠️ Strip before shipping
 
 The nuttx patch also carries **diagnostics only**, which must come out of the
 release build:
@@ -65,7 +117,7 @@ move either into ISR context, which faults on this board (`EXCCAUSE=0x14`).
 Matching cleanup in the defconfig: `CONFIG_DEBUG_AUDIO`, `_ERROR`, `_WARN`,
 `CONFIG_DEBUG_FEATURES`, `CONFIG_SYSLOG_CONSOLE`.
 
-## The `nxlooper` changes
+### The `nxlooper` changes
 
 `velapaw-audio-apps.patch` is almost entirely `VP: L*`/`VP: M*` instrumentation
 plus the silence-priming of TX before the record loop starts. It is a **bring-up
