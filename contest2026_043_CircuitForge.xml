@@ -10,5 +10,6 @@
 
   <project path="contest2026_043_CircuitForge" name="contest2026_043_CircuitForge">
     <linkfile src="app/velapaw" dest="packages/demos/contest2026_043_velapaw"/>
+    <linkfile src="agent" dest="packages/demos/contest2026_043_velapaw_agent"/>
   </project>
 </manifest>

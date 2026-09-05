@@ -591,21 +591,11 @@ static void ov5640_config_qvga(struct i2c_master_s *i, int testbar)
   ov5640_wr(i,0x3808,0x01);ov5640_wr(i,0x3809,0x40);ov5640_wr(i,0x380A,0x00);ov5640_wr(i,0x380B,0xF0);
   ov5640_wr(i,0x380C,0x08);ov5640_wr(i,0x380D,0x0C);ov5640_wr(i,0x380E,0x03);ov5640_wr(i,0x380F,0xD8);
   ov5640_wr(i,0x3810,0x00);ov5640_wr(i,0x3811,0x10);ov5640_wr(i,0x3812,0x00);ov5640_wr(i,0x3813,0x08);
-  /* Both bit1 (0x02, "sensor-side") and bit2 (0x04, "ISP-side") of these
-   * regs shift the raw Bayer CFA phase and corrupt color -- confirmed by
-   * testing bit2-only (0x05/0x05), which still produced the purple tint.
-   * In the OV5640, bits 1+2 are meant to be toggled TOGETHER as one flip
-   * unit (mask 0x06), not used as independent "safe" vs "unsafe" halves;
-   * splitting them left the sensor in an undefined partial-flip state.
-   * The real orientation bug (confirmed via a hand test on hardware: a
-   * vertical hand rendered horizontal) was a 90 deg transpose that these
-   * flip/mirror bits structurally cannot cause or fix -- that is now
-   * corrected in software (hal/camera_ov5640.c downscale/resample, which
-   * also carries the selfie mirror). So: leave the sensor's own flip/
-   * mirror OFF (bit0 preserved, meaning unknown/unrelated to flip -- not
-   * touched) and let software own 100% of the orientation. NOT touching
-   * 0x4514 -- ruled out last round. */
-  ov5640_wr(i,0x3820,0x01);ov5640_wr(i,0x3821,0x01);
+  /* image options: binning. Sensor flip/mirror bits (0x3820/0x3821 bit1+2)
+   * left cleared - software now owns 100% of orientation correction in
+   * camera_ov5640.c; splitting those bits produces an undefined partial-flip
+   * state (confirmed on hardware as a purple/Bayer-phase tint bug). */
+  ov5640_wr(i,0x3820,0x01);ov5640_wr(i,0x3821,0x01);ov5640_wr(i,0x4514,0x88);
   ov5640_wr(i,0x4520,0x0b);ov5640_wr(i,0x3814,0x31);ov5640_wr(i,0x3815,0x31);
   /* PLL for QVGA RGB565: set_pll(false,8,1,1,false,1,true,4) */
   ov5640_wr(i,0x3039,0x00);ov5640_wr(i,0x3034,0x1A);ov5640_wr(i,0x3035,0x11);ov5640_wr(i,0x3036,0x08);
@@ -693,8 +683,6 @@ static int cam_dma_init(void)
   memset(g_cambuf, 0, CAM_FRAME_BYTES);
   esp32s3_dma_setup(g_camdesc, CAM_NDESC + 2, g_cambuf, CAM_FRAME_BYTES,
                     false, g_camchan);
-  syslog(LOG_ERR,"[cam] dma chan=%d buf=%p ndesc=%d\n",
-         g_camchan, g_cambuf, CAM_NDESC);
   return 0;
 }
 
@@ -746,8 +734,7 @@ static void cam_capture_once(void)
 /* Configure the OV5640 + LCD_CAM + GDMA once (call at boot, after XCLK). */
 int board_ov5640_init(struct i2c_master_s *i2c)
 {
-  syslog(LOG_ERR,"[cam] init OV5640 QVGA RGB565\n");
-  ov5640_config_qvga(i2c, 0);        /* real camera; testbar diagnostic done */
+  ov5640_config_qvga(i2c, 0);        /* 0 = live camera (no test bar) */
   cam_pins_init();
   cam_lcdcam_init();
   return cam_dma_init();
@@ -915,9 +902,9 @@ int board_lcd_initialize(void)
       if (board_rtc_gettime(&_t) == 0)
         { struct timespec _ts; _ts.tv_sec = _t; _ts.tv_nsec = 0;
           clock_settime(CLOCK_REALTIME, &_ts);
-          syslog(LOG_ERR,"[wslcd] RTC ok: synced epoch=%ld\n", (long)_t); }
+          }
       else
-        { syslog(LOG_ERR,"[wslcd] RTC unset/absent - set it in the UI\n"); } }
+        { } }
     axp_power(i2c);ioe=pca9557_initialize(i2c,&g_tca);g_ioe=ioe;
     if(ioe){IOEXP_SETDIRECTION(ioe,0,IOEXPANDER_DIRECTION_OUT);IOEXP_SETDIRECTION(ioe,1,IOEXPANDER_DIRECTION_OUT);
       IOEXP_WRITEPIN(ioe,0,false);IOEXP_WRITEPIN(ioe,1,false);nxsig_usleep(100000);
@@ -927,14 +914,13 @@ int board_lcd_initialize(void)
      * (nxlooper -> loopback) is silent without it.  See board_speaker_enable(). */
 
     board_speaker_enable(true);
-    syslog(LOG_ERR,"[velapaw] speaker amp enabled (PA_CTRL = EXIO7)\n");
 #endif
     {struct i2c_msg_s _m[2]; uint8_t _r=0xA3,_id=0xFF; int _ret;
  _m[0].frequency=400000;_m[0].addr=0x38;_m[0].flags=0;_m[0].buffer=&_r;_m[0].length=1;
  _m[1].frequency=400000;_m[1].addr=0x38;_m[1].flags=I2C_M_READ;_m[1].buffer=&_id;_m[1].length=1;
  _ret=I2C_TRANSFER(i2c,_m,2);
- syslog(LOG_ERR,"[wslcd] FT6336 id(0xA3)=0x%02x ret=%d\n",_id,_ret);}
- ft5x06_register(i2c,&g_ts,0); syslog(LOG_ERR,"[wslcd] touch registered\n"); cam_probe(i2c);}
+ (void)_id; (void)_ret;}
+ ft5x06_register(i2c,&g_ts,0); cam_probe(i2c);}
   panel_init_spi();                 /* HARDWARE SPI display. The old bit-bang
                                      * panel_init() is kept above for reference
                                      * but must NOT run: bit-banging these pins
@@ -963,6 +949,7 @@ int board_lcd_initialize(void)
 #endif
   board_feeder_init();              /* 28BYJ-48 stepper via ULN2003 (GPIO9/10/11/43) */
   if(i2c) board_ov5640_init(i2c);   /* configure camera; velapaw drives capture */
+  syslog(LOG_ERR,"[wslcd] board_lcd_initialize reached end\n");
   g_lcd.dev.getvideoinfo=lcd_getvideoinfo;
   g_lcd.dev.getplaneinfo=lcd_getplaneinfo;
   g_lcd.dev.getpower=lcd_getpower;

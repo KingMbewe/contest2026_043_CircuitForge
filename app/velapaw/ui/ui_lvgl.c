@@ -3583,14 +3583,24 @@ void velapaw_ui_run(void)
   /* Time comes from the on-board PCF85063 RTC (synced in board_lcd_initialize),
    * so it persists across resets. That chip only stores years 2000-2099 -- its
    * year register is an offset from 2000 -- so the clock MUST live in that
-   * range or the register wraps to garbage. If what we got back is implausible
-   * (never set, or a pre-2000 epoch), seed a real date; the user then adjusts
-   * the time on Enroll and it is written straight back into the chip. */
+   * range or the register wraps to garbage.
+   *
+   * The anchor below is a FLOOR, not a one-shot "is it unset" test. A plain
+   * plausibility check (pre-2000 / pre-2017) only ever fires on a virgin
+   * chip: once it has written its constant, the RTC reads back plausible
+   * forever and the board stays pinned to whatever date that constant named,
+   * with no way to correct it -- wall_set_min() below only rewrites HH:MM,
+   * and CONFIG_RTC is off so nsh has no `date`. Comparing against the build
+   * date instead makes it self-correcting: a board behind the anchor is
+   * pushed up to it exactly once, a board already ahead is left alone, and
+   * each rebuild advances the floor. Bump VELAPAW_CLOCK_ANCHOR when the
+   * board comes back reading an old date. */
+#define VELAPAW_CLOCK_ANCHOR 1788393600L           /* 2026-09-03 00:00 */
   { struct timespec _ts;
     clock_gettime(CLOCK_REALTIME, &_ts);
-    if (_ts.tv_sec < 1500000000L)                  /* pre-2017 => not real */
+    if (_ts.tv_sec < VELAPAW_CLOCK_ANCHOR)
       {
-        _ts.tv_sec  = 1783900800L + 7 * 3600 + 55 * 60;  /* 2026-07-13 07:55 */
+        _ts.tv_sec  = VELAPAW_CLOCK_ANCHOR + 8 * 3600;   /* 08:00 that day */
         _ts.tv_nsec = 0;
         clock_settime(CLOCK_REALTIME, &_ts);
         board_rtc_settime(_ts.tv_sec);

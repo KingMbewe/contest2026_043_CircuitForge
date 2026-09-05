@@ -1,0 +1,287 @@
+diff --git a/src/channels/cmd_llm.c b/src/channels/cmd_llm.c
+index 0bda07f..216c68e 100644
+--- a/src/channels/cmd_llm.c
++++ b/src/channels/cmd_llm.c
+@@ -215,8 +215,11 @@ void cmd_set_llm(int argc, char** argv)
+      * llm_router_apply() -> llm_set_all() already persists
+      * llm_host/llm_path/llm_port/api_key/model to config_store,
+      * so config_show and reboot are covered without extra writes here. */
++    (void)0;  // DBGOFF: printf("[llmdbg] before llm_router_set_backend\n"); fflush(stdout);
+     llm_router_set_backend(0, &backend);
++    (void)0;  // DBGOFF: printf("[llmdbg] after llm_router_set_backend, before llm_router_apply\n"); fflush(stdout);
+     llm_router_apply(0);
++    (void)0;  // DBGOFF: printf("[llmdbg] after llm_router_apply\n"); fflush(stdout);
+ 
+     printf("LLM backend: %s:%s%s (model: %s) [router slot 0]\n",
+         host, port, path, model ? model : "(unchanged)");
+diff --git a/src/llm/llm_proxy.c b/src/llm/llm_proxy.c
+index 48157cc..68a15e1 100644
+--- a/src/llm/llm_proxy.c
++++ b/src/llm/llm_proxy.c
+@@ -35,8 +35,10 @@
+ #endif
+ 
+ #include "cJSON.h"
++#include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
++#include <time.h>
+ 
+ static const char* TAG = "llm";
+ 
+@@ -177,35 +179,49 @@ int llm_set_port(const char* port)
+ int llm_set_all(const char* host, const char* path,
+     const char* port, const char* api_key, const char* model)
+ {
++    (void)0;  // DBGOFF: printf("[llmdbg] llm_set_all: entry\n"); fflush(stdout);
+     pthread_mutex_lock(&s_llm_lock);
++    (void)0;  // DBGOFF: printf("[llmdbg] llm_set_all: after lock\n"); fflush(stdout);
+ 
+     if (host && host[0]) {
++        (void)0;  // DBGOFF: printf("[llmdbg] llm_set_all: before claw_config_set(host)\n"); fflush(stdout);
+         claw_config_set(AGENT_CFG_KEY_LLM_HOST, host);
++        (void)0;  // DBGOFF: printf("[llmdbg] llm_set_all: after claw_config_set(host)\n"); fflush(stdout);
+         strncpy(s_llm_host, host, sizeof(s_llm_host) - 1);
+         s_llm_host[sizeof(s_llm_host) - 1] = '\0';
+     }
+     if (path && path[0]) {
++        (void)0;  // DBGOFF: printf("[llmdbg] llm_set_all: before claw_config_set(path)\n"); fflush(stdout);
+         claw_config_set(AGENT_CFG_KEY_LLM_PATH, path);
++        (void)0;  // DBGOFF: printf("[llmdbg] llm_set_all: after claw_config_set(path)\n"); fflush(stdout);
+         strncpy(s_llm_path, path, sizeof(s_llm_path) - 1);
+         s_llm_path[sizeof(s_llm_path) - 1] = '\0';
+     }
+     if (port && port[0]) {
++        (void)0;  // DBGOFF: printf("[llmdbg] llm_set_all: before claw_config_set(port)\n"); fflush(stdout);
+         claw_config_set("llm_port", port);
++        (void)0;  // DBGOFF: printf("[llmdbg] llm_set_all: after claw_config_set(port)\n"); fflush(stdout);
+         strncpy(s_llm_port, port, sizeof(s_llm_port) - 1);
+         s_llm_port[sizeof(s_llm_port) - 1] = '\0';
+     }
+     if (api_key && api_key[0]) {
++        (void)0;  // DBGOFF: printf("[llmdbg] llm_set_all: before claw_config_set(api_key)\n"); fflush(stdout);
+         claw_config_set(AGENT_CFG_KEY_API_KEY, api_key);
++        (void)0;  // DBGOFF: printf("[llmdbg] llm_set_all: after claw_config_set(api_key)\n"); fflush(stdout);
+         strncpy(s_api_key, api_key, sizeof(s_api_key) - 1);
+         s_api_key[sizeof(s_api_key) - 1] = '\0';
+     }
+     if (model && model[0]) {
++        (void)0;  // DBGOFF: printf("[llmdbg] llm_set_all: before claw_config_set(model)\n"); fflush(stdout);
+         claw_config_set(AGENT_CFG_KEY_MODEL, model);
++        (void)0;  // DBGOFF: printf("[llmdbg] llm_set_all: after claw_config_set(model)\n"); fflush(stdout);
+         strncpy(s_model, model, sizeof(s_model) - 1);
+         s_model[sizeof(s_model) - 1] = '\0';
+     }
+ 
++    (void)0;  // DBGOFF: printf("[llmdbg] llm_set_all: before unlock\n"); fflush(stdout);
+     pthread_mutex_unlock(&s_llm_lock);
++    (void)0;  // DBGOFF: printf("[llmdbg] llm_set_all: after unlock, returning\n"); fflush(stdout);
+ 
+     syslog(LOG_INFO, "[%s] LLM config updated atomically: %s%s (model: %s)\n",
+         TAG, s_llm_host, s_llm_path, s_model);
+@@ -535,9 +551,61 @@ int llm_http_call(const char* post_data, resp_buf_t* rb,
+     }
+     return ERROR;
+ #else
+-    if (use_tls && http_proxy_is_enabled())
+-        return llm_http_via_proxy(post_data, rb, out_status);
+-    return llm_http_direct(post_data, rb, out_status);
++    /* The retry loop above is compiled only for the RPMSG/BLE-tethered
++     * transport, which left this path single-shot: the peer closes
++     * without sending a status line, vela_tls returns < 0, and the
++     * whole turn fails with no second attempt.  Observed on hardware
++     * as "RESP hdr in: 0 bytes" — roughly one firing in three, which
++     * for the proactive heartbeat means pushing an error to the owner
++     * instead of the digest.  Retry here so every caller benefits.
++     *
++     * Only fast failures are retried.  A call that burned the full
++     * watchdog budget has already spent the turn; trying again would
++     * stack another timeout onto an answer that is late anyway, and
++     * for the heartbeat could push one firing into the next interval.
++     */
++    int ret = ERROR;
++
++    for (int attempt = 0; attempt <= AGENT_LLM_HTTP_MAX_RETRIES; attempt++) {
++        if (attempt > 0) {
++            unsigned int delay = AGENT_LLM_RETRY_BASE_SEC << (attempt - 1);
++            syslog(LOG_WARNING, "[%s] HTTP transport failed, retry %d/%d "
++                "after %us\n",
++                TAG, attempt, AGENT_LLM_HTTP_MAX_RETRIES, delay);
++            sleep(delay);
++        }
++
++        /* Both paths call resp_buf_init(), which callocs over rb->data.
++         * Free first so a partially-filled buffer from the previous
++         * attempt is neither leaked nor concatenated onto this one. */
++        resp_buf_free(rb);
++
++        time_t t0 = time(NULL);
++
++        if (use_tls && http_proxy_is_enabled()) {
++            ret = llm_http_via_proxy(post_data, rb, out_status);
++        } else {
++            ret = llm_http_direct(post_data, rb, out_status);
++        }
++
++        if (ret == OK)
++            return OK;
++
++        long elapsed = (long)(time(NULL) - t0);
++        if (elapsed >= AGENT_LLM_TIMEOUT_SEC) {
++            syslog(LOG_WARNING,
++                "[%s] HTTP call failed after %lds (>= %ds watchdog), "
++                "not retrying\n",
++                TAG, elapsed, AGENT_LLM_TIMEOUT_SEC);
++            break;
++        }
++
++        syslog(LOG_WARNING, "[%s] HTTP call failed in %lds "
++            "(attempt %d/%d)\n",
++            TAG, elapsed, attempt + 1, AGENT_LLM_HTTP_MAX_RETRIES + 1);
++    }
++
++    return ret;
+ #endif
+ }
+ 
+diff --git a/src/llm/llm_router.c b/src/llm/llm_router.c
+index aa586f2..085f5dc 100644
+--- a/src/llm/llm_router.c
++++ b/src/llm/llm_router.c
+@@ -24,6 +24,7 @@
+  */
+ 
+ #include <inttypes.h>
++#include <stdio.h>
+ 
+ #include "llm/llm_router.h"
+ #include "cJSON.h"
+@@ -168,15 +169,19 @@ int llm_router_init(void)
+ 
+ int llm_router_set_backend(int index, const llm_backend_t* backend)
+ {
++    (void)0;  // DBGOFF: printf("[llmdbg] llm_router_set_backend: entry index=%d\n", index); fflush(stdout);
+     if (index < 0 || index >= LLM_ROUTER_MAX_BACKENDS || !backend) {
+         return -1;
+     }
+ 
++    (void)0;  // DBGOFF: printf("[llmdbg] llm_router_set_backend: before lock\n"); fflush(stdout);
+     pthread_mutex_lock(&s_router_lock);
++    (void)0;  // DBGOFF: printf("[llmdbg] llm_router_set_backend: after lock\n"); fflush(stdout);
+     memcpy(&s_backends[index], backend, sizeof(llm_backend_t));
+     s_backends[index].fail_count = 0;
+ 
+     /* Save to config */
++    (void)0;  // DBGOFF: printf("[llmdbg] llm_router_set_backend: before cJSON_CreateObject\n"); fflush(stdout);
+     cJSON* obj = cJSON_CreateObject();
+     if (!obj) {
+         pthread_mutex_unlock(&s_router_lock);
+@@ -189,15 +194,19 @@ int llm_router_set_backend(int index, const llm_backend_t* backend)
+     cJSON_AddStringToObject(obj, "model", backend->model);
+     cJSON_AddNumberToObject(obj, "priority", backend->priority);
+     cJSON_AddNumberToObject(obj, "cost_tier", backend->cost_tier);
++    (void)0;  // DBGOFF: printf("[llmdbg] llm_router_set_backend: after cJSON build\n"); fflush(stdout);
+ 
+     char* json = cJSON_PrintUnformatted(obj);
+     cJSON_Delete(obj);
+     obj = NULL;
++    (void)0;  // DBGOFF: printf("[llmdbg] llm_router_set_backend: after cJSON_PrintUnformatted json=%p\n", (void*)json); fflush(stdout);
+ 
+     if (json) {
+         char key[64];
+         snprintf(key, sizeof(key), "%s%d", CFG_KEY_BACKEND_PREFIX, index);
++        (void)0;  // DBGOFF: printf("[llmdbg] llm_router_set_backend: before claw_config_set key=%s\n", key); fflush(stdout);
+         claw_config_set(key, json);
++        (void)0;  // DBGOFF: printf("[llmdbg] llm_router_set_backend: after claw_config_set\n"); fflush(stdout);
+         free(json);
+         json = NULL;
+     }
+@@ -206,7 +215,9 @@ int llm_router_set_backend(int index, const llm_backend_t* backend)
+         s_backend_count = index + 1;
+     }
+ 
++    (void)0;  // DBGOFF: printf("[llmdbg] llm_router_set_backend: before unlock\n"); fflush(stdout);
+     pthread_mutex_unlock(&s_router_lock);
++    (void)0;  // DBGOFF: printf("[llmdbg] llm_router_set_backend: after unlock, returning\n"); fflush(stdout);
+ 
+     syslog(LOG_INFO, "[%s] Backend %d configured: %s\n", TAG, index, backend->host);
+     return 0;
+@@ -505,21 +516,26 @@ void llm_router_report_latency(int index, uint32_t latency_ms)
+ 
+ int llm_router_apply(int index)
+ {
++    (void)0;  // DBGOFF: printf("[llmdbg] llm_router_apply: entry index=%d\n", index); fflush(stdout);
+     if (index < 0 || index >= LLM_ROUTER_MAX_BACKENDS) {
+         return -1;
+     }
+ 
+     llm_backend_t b;
++    (void)0;  // DBGOFF: printf("[llmdbg] llm_router_apply: before lock\n"); fflush(stdout);
+     pthread_mutex_lock(&s_router_lock);
+     memcpy(&b, &s_backends[index], sizeof(b));
+     pthread_mutex_unlock(&s_router_lock);
++    (void)0;  // DBGOFF: printf("[llmdbg] llm_router_apply: after unlock, host=%s\n", b.host); fflush(stdout);
+ 
+     if (b.host[0] == '\0') {
+         return -1;
+     }
+ 
+     /* Atomic update — single lock acquisition in llm_proxy */
++    (void)0;  // DBGOFF: printf("[llmdbg] llm_router_apply: before llm_set_all\n"); fflush(stdout);
+     llm_set_all(b.host, b.path, b.port, b.api_key, b.model);
++    (void)0;  // DBGOFF: printf("[llmdbg] llm_router_apply: after llm_set_all\n"); fflush(stdout);
+ 
+     return 0;
+ }
+diff --git a/src/tools/tool_registry.c b/src/tools/tool_registry.c
+index 33583e7..eb1376e 100644
+--- a/src/tools/tool_registry.c
++++ b/src/tools/tool_registry.c
+@@ -86,8 +86,47 @@ void tool_registry_register_provider(const char* name,
+     syslog(LOG_INFO, "[%s] Registered tool provider: %s\n", TAG, name);
+ }
+ 
++/* VelaPaw: tools that make no sense on a pet feeder.
++ *
++ * Every registered tool's JSON schema is serialised into EVERY LLM
++ * request. Measured on hardware: 9,946 B of a 19,391 B request body was
++ * tool schemas. The pool that send has to fit through is
++ * IOB_NBUFFERS(64) * IOB_BUFSIZE(196) = 12,544 B, less IOB_THROTTLE(24),
++ * so ~7,840 B is usable to a sender -- a single request is ~2.5x the
++ * pool, and the send can only complete by blocking and draining as ACKs
++ * recycle buffers. Shrinking the request is the fix; a send timeout is
++ * not (it turns the load-bearing wait into a hard failure).
++ */
++static const char* const s_excluded_tools[] = {
++    /* wearable sensors */
++    "get_heartrate", "get_steps", "get_wear_state", "vibrate",
++    /* Feishu / Lark office integration */
++    "feishu_doc_create", "feishu_doc_write", "feishu_doc_read",
++    "feishu_doc_list", "feishu_chat_members", "feishu_send_mention",
++    /* music player */
++    "music_search", "music_play", "music_pause", "music_resume",
++    "music_stop", "music_seek", "music_set_volume", "music_status",
++    /* quickapp launcher */
++    "launch_quickapp", "exit_quickapp",
++};
++
++static bool tool_is_excluded(const char* name)
++{
++    for (size_t i = 0;
++         i < sizeof(s_excluded_tools) / sizeof(s_excluded_tools[0]); i++) {
++        if (strcmp(name, s_excluded_tools[i]) == 0) {
++            return true;
++        }
++    }
++    return false;
++}
++
+ static void register_tool(const agent_tool_t* tool)
+ {
++    if (tool->name && tool_is_excluded(tool->name)) {
++        return;
++    }
++
+     if (s_tool_count >= MAX_TOOLS) {
+         syslog(LOG_ERR, "[%s] Tool registry full\n", TAG);
+         return;
