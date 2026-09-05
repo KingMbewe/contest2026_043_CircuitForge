@@ -10,17 +10,12 @@
 
 ## Demo Video
 
-<!-- TODO: paste the GitHub-generated CDN URL here after uploading VelaPaw_Demo.mp4 through the GitHub web editor (drag the file into this README's edit box on github.com). GitHub renders it as a native inline player automatically. -->
-
-
-
-
 https://github.com/user-attachments/assets/a639eef1-33c9-4097-a354-4b197974522a
 
 
 
 
-▶ If the embedded video above doesn't load, [download it directly](VelaPaw_Demo.mp4) (58MB, MP4). We recommend you download the video for better quality.
+▶ If the embedded video above doesn't load, [download it directly](VelaPaw_Demo.mp4) (93MB, MP4). We recommend you download the video for better quality.
 
 ---
 
@@ -91,7 +86,29 @@ The gate in the middle is the whole idea: recognition alone would feed a greedy 
 
 ---
 
-## 4. Hardware
+## 4. The on-device AI agent (the one part that needs internet)
+
+The openVela **`ai_agent`** framework runs on the same ESP32-S3, as a layer *on top of* the finished feeder. It gives VelaPaw a second way to be useful: instead of the owner going to the screen to check on a pet, the device reads its own feeding records and speaks up when something looks wrong.
+
+**What runs on the device**
+
+| | |
+|---|---|
+| **Custom Skill** | A feeding-digest Skill at `/data/ai_agent/skills/` — it reads VelaPaw's own feeding records (written to flash by the feeder every time it dispenses) and turns them into a per-pet summary: grams, meals, and appetite measured against that pet's own baseline. |
+| **Ask it (CLI)** | `ask how much did bob eat today` — the agent reads the live records off the device's flash and answers from them, not from a canned reply. |
+| **Proactive push** | A heartbeat task re-reads the records on a timer and pushes a warning **only when a pet crosses a concern threshold** — a quiet device means nothing is wrong. It fires unattended, with nobody at the console. (The demo build uses a short 3-minute interval so the push can be seen firing within a demo; a shipping product would use hours.) |
+
+**Offline vs online — where the line is**
+
+> **The feeder itself never needs the internet.** Recognition, the meal schedule, portion and daily-limit control, body-condition scoring, the feeding history and trends, the voice dialog and the entire UI all run on the ESP32-S3 with no network of any kind. Unplug the network and VelaPaw keeps identifying pets and feeding them on schedule, exactly as before.
+>
+> **The agent layer is the only part that needs the internet**, because it talks to a hosted LLM over the device's USB network interface (CDC-NCM). With the network down, `ask` and the proactive push stop — and nothing else does. No feeding decision is ever made in the cloud, and no image ever leaves the device.
+
+Full write-up — architecture, the Skill, the framework patches, and the captured proactive push: **[docs/AI_AGENT.md](docs/AI_AGENT.md)** ([中文](docs/AI_AGENT_zh.md)). The device-side source and patches are in [`agent/`](agent/).
+
+---
+
+## 5. Hardware
 
 - **Waveshare ESP32-S3-Touch-LCD-3.5-C** — ESP32-S3, 8 MB PSRAM, 16 MB flash, 320×480 ST7796 touch LCD, OV5640 camera, PCF85063 RTC.
 
@@ -101,10 +118,12 @@ The gate in the middle is the whole idea: recognition alone would feed a greedy 
 
 ---
 
-## 5. Repository layout
+## 6. Repository layout
 
 ```
 app/velapaw/     — the device application (linkfile'd to packages/demos/ by the manifest)
+agent/           — the ai_agent layer: custom Skill, heartbeat task, and the
+                   patches against packages/ai_agent (see agent/README.md)
 board/           — board files: display/camera/RTC/stepper (esp32s3_st7789.c),
                    auto-start (esp32s3_appinit.c), and the board defconfig
 host/            — off-device model training & export (TensorFlow/Keras)
@@ -115,7 +134,7 @@ logs/            — AI-Coding session logs (this project was built with AI assi
 
 ---
 
-## 6. Build & run (real hardware)
+## 7. Build & run (real hardware)
 
 ```bash
 # 1. Pull openVela + this team repo
@@ -147,7 +166,7 @@ On boot the device runs the feeder UI directly. **Enroll a pet** (capture a few 
 
 ---
 
-## 7. AI-assisted development
+## 8. AI-assisted development
 
 This project was built end-to-end with AI-assisted (AI Coding) development, and the full session logs are committed under [`logs/`](logs/) as required. AI was used throughout the lifecycle:
 
@@ -158,13 +177,15 @@ This project was built end-to-end with AI-assisted (AI Coding) development, and 
 
 ---
 
-## 8. Status
+## 9. Status
+
+**On-device `ai_agent`:** running on hardware — the custom feeding-digest Skill, the `ask` CLI channel, and the proactive push, captured firing unattended. It is the only part of VelaPaw that needs an internet connection; everything in the feeder itself keeps working with the network down. See [§4](#4-the-on-device-ai-agent-the-one-part-that-needs-internet).
 
 **Working on hardware today:** on-device recognition, body-condition scoring, recognition-gated 3-meals/day scheduling with a per-slot skip-meal toggle, portion & daily-limit control, feeding history & trends with appetite-drop alerts, hardware RTC, full pet lifecycle with persistent photos, auto-start, a hardware-SPI + DMA display, a bilingual EN/中文 UI with a live toggle, a spoken MEAL→HOUR→CONFIRM meal-scheduling dialog (hardware-proven end to end), the **28BYJ-48 stepper feeder** (turning on GPIO9/10/11/43), the **OV5640 relocated onto a 30 cm FFC** and confirmed working through the coupler + `cam_mast` mount, and the **3D-printed enclosure fully assembled** — stepper dispenser and relocated camera mounted into the printed structure.
 
 ---
 
-## 9. Datasets
+## 10. Datasets
 
 Datasets used in this project can be found at: https://drive.google.com/drive/folders/1-HnbS-VStbKuXCXWK-O1Nh2lNLdqMpbI
 

@@ -1,0 +1,692 @@
+<meta charset="utf-8">
+<title>VelaPaw 技术报告</title>
+<style>
+  body { font-family: "Microsoft YaHei", "微软雅黑", sans-serif; font-size: 11pt; line-height: 1.65; color:#1a1a1a; }
+  h1 { font-size: 22pt; text-align:center; margin-bottom: 4pt; }
+  h2 { font-size: 16pt; border-bottom: 1.5pt solid #2b5b84; padding-bottom: 3pt; margin-top: 22pt; color:#1d4568; }
+  h3 { font-size: 13pt; margin-top: 16pt; color:#1d4568; }
+  h4 { font-size: 11.5pt; margin-top: 12pt; color:#333; }
+  table { border-collapse: collapse; width: 100%; margin: 8pt 0 12pt 0; font-size: 10pt; }
+  th, td { border: 0.75pt solid #9aa7b1; padding: 5pt 7pt; vertical-align: top; text-align: left; }
+  th { background: #e8eef4; font-weight: bold; }
+  pre { font-family: Consolas, "Courier New", monospace; font-size: 9pt; background:#f5f6f8;
+        border: 0.75pt solid #ccd3d9; padding: 8pt; white-space: pre; line-height:1.35; }
+  code { font-family: Consolas, "Courier New", monospace; font-size: 9.5pt; }
+  .cover { text-align:center; margin: 24pt 0 30pt 0; font-size: 12pt; line-height: 2.0; }
+  .note { background:#fbf7e8; border-left: 3pt solid #c8a44a; padding: 6pt 10pt; margin: 8pt 0; font-size: 10pt; }
+  .caption { font-size: 9.5pt; color:#555; margin-top:-6pt; }
+</style>
+
+<h1>VelaPaw —— 端侧 AI 多宠智能喂食器</h1>
+<p style="text-align:center; font-size:13pt; margin-top:0;">技术报告</p>
+
+<div class="cover">
+<strong>2026 首届 openVela AI 硬件开发者大赛</strong><br>
+赛道：AI 硬件产品创新<br>
+队伍名称：CircuitForge（<code>contest2026_043</code>）<br>
+作品名称：VelaPaw<br>
+代码仓库：<code>contest2026_043_CircuitForge</code>（分支 <code>dev-ai-contest-2026</code>）<br>
+硬件平台：openVela（NuttX） / Waveshare ESP32-S3-Touch-LCD-3.5-C<br>
+提交日期：2026-09-06
+</div>
+
+<hr>
+
+<h2>一、材料清单</h2>
+
+<table>
+<tr><th style="width:16%">材料</th><th style="width:10%">要求</th><th style="width:30%">文件</th><th>说明</th></tr>
+<tr>
+  <td><strong>作品介绍文档</strong><br>（即本技术报告）</td><td>必交</td>
+  <td><code>VelaPaw_技术报告.pdf</code> / <code>.docx</code><br><code>VelaPaw_Technical_Report.pdf</code> / <code>.docx</code></td>
+  <td>本文件<strong>即</strong>提交规则要求的"作品介绍文档"——按官网模板填写，未自建格式。提供 PDF 与 DOCX 两种格式，中英双语各一份。</td>
+</tr>
+<tr>
+  <td><strong>演示视频</strong></td><td>必交</td>
+  <td><code>VelaPaw_Demo.mp4</code></td>
+  <td>时长 <strong>4 分 58 秒</strong>（≤5 min）；1920×1080 / 30 fps，H.264 High + AAC 48 kHz 立体声，93.3 MB，已内嵌<strong>中英双语字幕</strong>。全片为真机实拍：触摸屏交互、识别门控投喂、步进电机投料、语音排程对话，以及 <code>ai_agent</code> 在真机上的 <code>ask</code> 与主动推送控制台实录（末段控制台画面故意不加字幕，以免遮挡日志内容）。视频亦已嵌入仓库 README。</td>
+</tr>
+<tr>
+  <td>作品展示照片</td><td>可选</td>
+  <td><code>hardware/preview/</code></td>
+  <td>3D 打印投料器与整机装配渲染/实拍图。</td>
+</tr>
+<tr>
+  <td>补充产品介绍</td><td>仅存于仓库<br>（不在压缩包内）</td>
+  <td><code>VelaPaw_Project_Intro.pdf</code><br><code>VelaPaw_Project_Intro_zh.pdf</code></td>
+  <td>早期面向非技术读者的产品介绍（中英双语），含市场与价值分析，留在仓库中供参考。<strong>不</strong>随提交压缩包提交——上表的模板文档才是"作品介绍文档"。</td>
+</tr>
+<tr>
+  <td>海报 / 答辩 PPT</td><td>可选</td>
+  <td>—</td>
+  <td>未提交。</td>
+</tr>
+<tr>
+  <td>AI Coding 日志</td><td>必交</td>
+  <td><code>logs/KingMbewe/</code></td>
+  <td>由组委会预装的 <code>contest-log-collector</code> 自动归集，未经手工编辑；共 17 个 JSONL 文件、78.7 MB、55 255 条事件。</td>
+</tr>
+</table>
+
+<p>提交压缩包：<code>CircuitForge-VelaPaw-contest2026_043_CircuitForge.zip</code>（&lt;队伍名&gt;-&lt;作品名&gt;-&lt;仓库名&gt;），内含规则要求的两项内容——<strong>作品介绍文档</strong>（本报告，PDF + DOCX，中英各一份）与<strong>演示视频</strong>（<code>VelaPaw_Demo.mp4</code>，4 分 58 秒）。代码仓库地址已写在封面与第二节。</p>
+
+<h2>二、作品基本信息</h2>
+
+<table>
+<tr><th style="width:22%">项目</th><th>内容</th></tr>
+<tr><td>作品名称</td><td>VelaPaw —— 端侧 AI 多宠智能喂食器</td></tr>
+<tr><td>参赛赛道</td><td>AI 硬件产品创新</td></tr>
+<tr><td>队伍 / 编号</td><td>CircuitForge / <code>contest2026_043</code></td></tr>
+<tr><td>硬件载体</td><td>Waveshare ESP32-S3-Touch-LCD-3.5-C（ESP32-S3，Xtensa LX7 双核，8 MB PSRAM，16 MB Flash，320×480 ST7796 电容触摸屏，OV5640 摄像头，PCF85063 RTC，ES8311 音频编解码器）+ 自研 3D 打印叶轮投料机构（28BYJ-48 步进电机 / ULN2003）</td></tr>
+<tr><td>操作系统</td><td>openVela（NuttX），板级配置 <code>esp32s3-devkit:waveshare_lcd</code></td></tr>
+<tr><td>落地的 openVela 能力</td><td><strong>图形</strong>（LVGL）、<strong>AI</strong>（<code>apps/mlearning/tflite-micro</code> + <code>ai_agent</code> 框架）、<strong>多媒体</strong>（NuttX Audio / I²S / ES8311 + <code>apps/video</code> 摄像头栈）—— 三类均已使用</td></tr>
+<tr><td>唤醒词</td><td><strong>本作品不含常驻语音唤醒功能</strong>。语音排程需先在"编辑宠物"页手动点击开始，再依次语音应答，属于按键触发的受限词识别（KWS），不存在常驻监听的唤醒词。因此大赛规则中"统一唤醒词须为 <em>你好，openvela</em> / <em>Hello，openvela</em>"的要求对本项目不适用；若后续加入常驻唤醒，将按规则统一词条。</td></tr>
+<tr><td>开源许可</td><td>Apache License 2.0</td></tr>
+<tr><td>代码托管</td><td>GitHub — <code>github.com/open-vela/contest2026_043_CircuitForge</code>，分支 <code>dev-ai-contest-2026</code></td></tr>
+</table>
+
+<h2>三、技术报告</h2>
+
+<h3>3.1 绪论</h3>
+
+<h4>3.1.1 背景与问题定义</h4>
+
+<p>多宠家庭里，普通定时喂食器有一个结构性缺陷：<strong>它不知道站在食盆前的是哪一只宠物</strong>。到点开盖，先到的那只把所有粮都吃掉，慢的那只挨饿——按只定量、按只控重、按只观察食欲，全部无从谈起。而"按只定量"恰恰是宠物医生给出减重、控病、术后恢复方案时的第一条要求。</p>
+
+<p>市面上已有的"视觉款"喂食器（例如 2026 年 3 月上市的小米米家智能宠物喂食器 2 视觉版，众筹 ¥449 / 零售 ¥549）解决的是"让主人<em>看得见</em>食盆"，摄像头的产物是一路视频流；它并不解决"<em>认出</em>是哪一只"。这类产品同时把摄像头画面与账号绑定上云——这是宠物主人对家庭摄像头最主要的顾虑来源。</p>
+
+<p>因此 VelaPaw 定义的问题是：</p>
+<blockquote>
+在一台 MCU 级设备上，<strong>不联网、不上云、不用手机 App</strong>，仅凭一颗摄像头就分辨出食盆前是哪一只宠物，并只投喂"这一只、此时此刻该吃的那一餐"；同时把每只宠物的进食量长期记录下来，在食欲异常时主动告知主人。
+</blockquote>
+
+<p>"主动告知"这一层由 openVela 的 <code>ai_agent</code> 框架承担，是全系统<strong>唯一</strong>需要联网的部分；喂食器本体在断网状态下功能完全不变。</p>
+
+<h4>3.1.2 技术难点</h4>
+
+<table>
+<tr><th style="width:24%">难点</th><th>具体表现</th></tr>
+<tr><td><strong>①端侧细粒度识别的算力**</strong></td>
+<td>宠物个体识别属于细粒度识别，需要 MobileNet 级主干 + 度量学习头。在 Xtensa LX7 上用 TFLite-Micro <em>参考</em>算子跑该模型需 <strong>≈6.75 s/次</strong>，完全不可用。前期 TFLM 摸底（<code>docs/TFLM_SPIKE_REPORT.md</code>，<strong>在 QEMU 模拟器上进行，非 S3 实测</strong>）用 profiler 定量确认了同类 INT8 CNN 的时间分布：<strong>CONV_2D 占单次推理 84% 的时钟</strong>（643 819 / 768 105 ticks），即延迟几乎完全由 INT8 卷积核决定，而 openVela 树内只有 <code>cmsis-nn</code>(ARM) 与 <code>nnlib-hifi4</code>(HiFi DSP)，<strong>没有面向 LX7 的算子库</strong>。</td></tr>
+<tr><td><strong>②"新增一只宠物"不能重训</strong></td>
+<td>消费产品不可能让用户为了加一只猫去训练模型。必须放弃 N 分类，改用开集度量学习，且阈值要在真实光照下站得住。</td></tr>
+<tr><td><strong>③大模型放不进 MCU 的内存映射</strong></td>
+<td>1.44 MB 的身份模型无法作为 <code>const</code> 数组内存映射——ESP32-S3 的 DROM0 MMU 窗口远在此之前就饱和。必须从裸 Flash 读入 PSRAM；而 <strong>Flash 读会挂起 CPU cache，而 PSRAM 正是经该 cache 访问的</strong>，读模型的线程栈若落在 PSRAM 会直接死锁整颗 SoC。</td></tr>
+<tr><td><strong>④硬件 SPI 屏幕"渲染不出来"</strong></td>
+<td>全屏写正常，任何<strong>局部窗口</strong>（<code>CASET</code>/<code>RASET</code> 子矩形 + <code>RAMWR</code>）永不出图，而同样的字节序列走 GPIO 位翻转完全正常。该问题<strong>历经约 60 轮盲目编译未能解决</strong>。</td></tr>
+<tr><td><strong>⑤ai_agent 在 MCU 上的请求体 vs. 网络缓冲</strong></td>
+<td><code>ai_agent</code> 默认注册 36 个工具，其 JSON schema 使单次 LLM 请求体达 <strong>19 391 B</strong>，其中 <strong>9 946 B 是工具 schema</strong>；而 NuttX 的 IOB 池仅 <code>NBUFFERS(64) × BUFSIZE(196) = 12 544 B</code>，扣除 <code>THROTTLE(24)</code> 后可用约 <strong>7 840 B</strong>。请求体远大于可用缓冲，表现为"时好时坏"的挂死，且无超时返回。</td></tr>
+<tr><td><strong>⑥Agent 答案"看起来对"但其实是假的</strong></td>
+<td>心跳任务会重放自己的历史、<code>list_dir</code> 的前缀匹配与本地工具短路会把 <code>(no files found)</code> 直接当成最终答案交给用户、<code>ask</code> 在第 7 个词处被 <code>MAX_ARGS</code> 截断。这些缺陷都<strong>不会报错</strong>，只会让回答变得流畅而错误。</td></tr>
+</table>
+
+<h4>3.1.3 创新点</h4>
+
+<ol>
+<li><strong>"识别 × 排程"双条件门控投喂</strong>——只有"认出的是这只宠物"<em>且</em>"它的某一餐已到点且今天未投"两个条件同时成立才投料，每餐每天至多一次，且每餐可单独跳过。只靠识别会把贪吃的那只喂一整天；只靠定时又会喂到碰巧路过的那只。这个"与"门是整个产品的核心逻辑，也是"按只定量"能成立的前提。</li>
+<li><strong>开集度量学习替代分类器</strong>——模型只做"通用宠物特征提取器"，把 128×128 帧映射成 L2 归一化的 128 维嵌入；登记 = 存若干张照片的平均嵌入；识别 = 余弦相似度匹配。<strong>新增宠物是纯运行时操作，无需重训、无需固件更新</strong>。</li>
+<li><strong>把一个卡了 60 轮的 bug 变成 4× 提速</strong>——用逻辑分析仪把"软件问题"证伪为"面板位同步问题"（详见 3.4.3），修复后顺势把显示从位翻转升级为 40 MHz 硬件 SPI + GDMA，全屏重绘 <strong>246 ms → 61 ms</strong>。</li>
+<li><strong>ai_agent 作为"沉默的健康监护"，而不是聊天机器人</strong>——心跳任务定期读取喂食器自己写在 Flash 上的记录，<strong>只在越过阈值时才开口</strong>；一切正常时设备完全沉默。自定义 Skill 明确规定"只能使用文件里的数字，绝不臆造"。</li>
+<li><strong>"离线为主、联网为辅"的清晰边界</strong>——所有投喂决策与全部图像处理都在端侧完成，<strong>没有任何图像离开设备</strong>；拔掉网线，喂食器行为完全不变，只是 Agent 层停止工作。这既是隐私主张，也是可靠性主张。</li>
+<li><strong>逐"兜"定量的机械设计</strong>——用连续单向旋转的叶轮转子取代翻板：翻板的投放量随料斗余量漂移，而转子每格容积固定，<code>克数 = 格数 × 每格克数</code>，使"按只定量"在机械层面也成立。</li>
+</ol>
+
+<h3>3.2 系统方案设计</h3>
+
+<h4>3.2.1 总体架构</h4>
+
+<pre>
+┌──────────────────────────── ESP32-S3 (openVela / NuttX) ────────────────────────────┐
+│                                                                                      │
+│  ┌── 应用层 app/velapaw/ ───────────────────────┐   ┌── ai_agent（唯一联网层）──┐    │
+│  │  ui/       LVGL 四页触摸界面                 │   │  agent_loop  工具调度      │    │
+│  │            登记 · 识别 · 我的宠物 · 趋势     │   │  16 个内置工具 (4 706 B)   │    │
+│  │  infer/    推理接口 + TFLM 后端              │   │  Skills 引擎 (10 内置 +    │    │
+│  │  identity/ 登记库 · 余弦匹配 · Flash 持久化  │◄──┤     1 自定义)              │    │
+│  │  store/    进食历史 · 趋势 · 食欲分析        │   │  心跳服务 (主动推送)       │    │
+│  │  voice/    KWS + MEAL→HOUR→CONFIRM 对话      │   │  会话持久化 .jsonl         │    │
+│  │  hal/      camera / feeder 硬件抽象          │   └──────────┬─────────────────┘    │
+│  └───────┬──────────────────────────────────────┘              │ 只读 Markdown       │
+│          │                                                     │ /data/ai_agent/     │
+│  ┌───────▼──── openVela 系统能力 ────────────────────────────────▼──────────────┐    │
+│  │ LVGL 图形 │ tflite-micro (+ESP-NN) │ Audio/I²S/ES8311 │ video/OV5640 │        │    │
+│  │ littlefs (/data @0x180000) │ USB 复合设备 CDC-ACM + CDC-NCM │ mbedTLS/TLS1.2 │    │
+│  └───────┬───────────────────────────────────────────────────────────┬─────────┘    │
+│          │ board/ 自研板级驱动                                        │ CDC-NCM     │
+│  ┌───────▼─────────────────────────────────────────────────────┐     │ 192.168.137.2│
+│  │ ST7796 (HW SPI2 40 MHz + GDMA) │ OV5640 (LCD_CAM + GDMA)    │     │              │
+│  │ PCF85063 RTC (I²C 裸寄存器)    │ 28BYJ-48 步进 (ULN2003×4GPIO)│    │              │
+│  └─────────────────────────────────────────────────────────────┘     │              │
+└──────────────────────────────────────────────────────────────────────┼──────────────┘
+                                                                       ▼
+                                                        DeepSeek API (api.deepseek.com:443)
+</pre>
+<p class="caption">图 3-1　VelaPaw 系统总体框图</p>
+
+<h4>3.2.2 方案论证与选型</h4>
+
+<table>
+<tr><th style="width:16%">决策点</th><th style="width:24%">最终选型</th><th>论证 / 被否方案</th></tr>
+<tr><td>识别范式</td><td>开集度量学习（余弦匹配）</td><td><strong>否决 N 分类</strong>：每加一只宠物都要重训并 OTA，消费产品不可接受。度量学习把"加宠物"降级为写一条 Flash 记录。代价是对"非宠物物体"的拒识天然较弱，因此把杠杆放在登记质量（近距、光照良好的正脸）而非阈值本身。</td></tr>
+<tr><td>推理运行时</td><td>TFLite-Micro + ESP-NN</td><td>前期用树内 <code>tflm_benchmark</code> 在模拟器上摸底，确认 <strong>集成可行、算子全覆盖、张量竞技场仅 84 420 B</strong>（8 MB PSRAM 下可忽略），并定位延迟瓶颈在 CONV_2D（84%）。据此判定必须引入 LX7 SIMD 算子（ESP-NN），否则方案不成立。</td></tr>
+<tr><td>模型存放</td><td>裸 Flash 分区 + 开机读入 PSRAM</td><td><strong>否决 <code>const</code> 数组内存映射</strong>：1.44 MB 远超 DROM0 MMU 窗口。改用 <code>spi_flash_read</code>；因 Flash 读会挂起 cache，读取线程的栈必须放在内部 SRAM（<code>.bss</code>）而非 PSRAM。</td></tr>
+<tr><td>投料机构</td><td>28BYJ-48 步进 + 叶轮转子</td><td><strong>否决 MG90S 舵机 + 翻板</strong>：舵机只能往复摆动，进出料口相隔 180° 时净转角为零的摆动永远无法把一"兜"粮送过去，只会投出初始装载量后空转；翻板的投放量还随料斗余量漂移，直接摧毁"按只定量"的产品主张。步进电机连续单向旋转使 <code>克数 = 格数 × 每格克数</code> 严格成立，且减速箱低速扭矩大，抗卡粮。</td></tr>
+<tr><td>载板</td><td>Waveshare ESP32-S3-Touch-LCD-3.5-C</td><td>与官方 ESP32-S3-EYE <strong>同一颗 SoC</strong>，openVela 移植与推理工作完全共通；但产品需要<strong>电容触摸屏</strong>（登记 / 编辑排程 / 看趋势）与<strong>硬件 RTC</strong>（断电后排程仍准），EYE 二者皆无。同平台，换更合适的载板。</td></tr>
+<tr><td>板载网络</td><td>USB CDC-NCM 复合设备</td><td><strong>否决 RNDIS</strong>：Windows 的 <code>rndismp6.sys</code> 硬性要求 RNDIS 位于接口 0，与 CDC-ACM 控制台冲突，实测 Code-10 无法规避。CDC-NCM 使<strong>控制台（COM 口）与网卡（<code>eth0</code>）在一根 USB 线上同时可用</strong>。<strong>否决板载 Wi-Fi 作为演示链路</strong>：Wi-Fi 已打通并保留在配置中，但演示环境下 USB 复合链路的可复现性更高。</td></tr>
+<tr><td>Agent 数据桥</td><td>喂食器写 Markdown，Agent 用 <code>read_file</code> 读</td><td><strong>否决自定义工具 / IPC / 共享内存</strong>：VelaPaw C 应用每次投喂后把纯文本 Markdown 写到 <code>/data/ai_agent/velapaw/{status,feed_log}.md</code>，Agent 用<strong>框架原生的 <code>read_file</code></strong> 读取。零新增工具、零新增协议、零耦合；对 Agent 而言它就是一个普通文件，对 C 应用而言它就是一次 <code>fprintf</code>。</td></tr>
+<tr><td>Agent 持久化</td><td>littlefs @ <code>0x180000</code> 挂载 <code>/data</code></td><td><strong>否决 tmpfs</strong>：API Key、会话历史、Skill 文件每次重启都要重新灌入。littlefs 分区起始于 <code>0x180000</code>，而 <code>write-flash 0x0 nuttx.bin</code> 只写到约 <code>0x17ec80</code>，因此 <strong><code>/data</code> 能跨重启、也跨重新烧录固件保留</strong>。</td></tr>
+<tr><td>云端模型</td><td>DeepSeek <code>deepseek-chat</code></td><td>OpenAI 兼容接口，框架原生支持 function-calling；国内可直连、时延与费用可控。</td></tr>
+</table>
+
+<h4>3.2.3 断网 / 弱网降级策略</h4>
+
+<p>这是本作品在方案层刻意设计的一条边界，也是"AI 硬件"与"联网硬件"的分水岭。</p>
+
+<table>
+<tr><th style="width:34%">功能</th><th style="width:14%">断网</th><th>说明</th></tr>
+<tr><td>宠物识别（INT8 推理）</td><td>✅ 正常</td><td>模型在 Flash / PSRAM 本地，无任何网络依赖。</td></tr>
+<tr><td>识别门控投喂 / 每日上限</td><td>✅ 正常</td><td>纯本地状态机 + RTC。</td></tr>
+<tr><td>体况评估、进食历史与趋势</td><td>✅ 正常</td><td>第二个端侧模型 + littlefs 本地历史。</td></tr>
+<tr><td>语音排程对话（KWS）</td><td>✅ 正常</td><td>端侧关键词模型，不走网络。</td></tr>
+<tr><td>触摸界面全部功能</td><td>✅ 正常</td><td>LVGL 本地渲染。</td></tr>
+<tr><td>Agent <code>ask</code> 问答</td><td>⛔ 停止</td><td>需访问云端 LLM。失败时在控制台给出明确的 <code>[llm] API error</code> 行，不产生虚构回答。</td></tr>
+<tr><td>Agent 主动健康推送</td><td>⛔ 静默</td><td>心跳任务照常触发、照常读取本地文件，仅 LLM 调用失败；<strong>不会误报，也不会丢数据</strong>——恢复联网后下一次心跳即可基于完整历史给出结论。</td></tr>
+</table>
+
+<p><strong>弱网</strong>处理分三层：（1）传输层——<code>vela_tls</code> 维护到 <code>api.deepseek.com:443</code> 的连接池并复用（控制台可见 <code>[vela_tls] Reusing pooled connection</code>）；空闲 keep-alive 被服务端关闭时会出现零字节响应，框架在带内自动重连，实测 3/3 恢复，<strong>该现象不是缺陷</strong>。（2）超时层——针对 MCU 上的真实往返，把 <code>AGENT_LLM_TIMEOUT_SEC</code> 放宽到 <strong>420 s</strong>、socket 超时 <strong>480 s</strong>；此前 60 s 的默认值会把一个已经成功返回的 62.6 s 回答直接丢弃。（3）请求体层——见 3.3.3 的工具裁剪，把请求体压到 IOB 池能承载的范围，这是弱网下最有效的一条。</p>
+
+<h4>3.2.4 关键模块设计</h4>
+
+<table>
+<tr><th style="width:18%">模块</th><th style="width:26%">位置</th><th>职责与关键设计</th></tr>
+<tr><td>UI</td><td><code>app/velapaw/ui/</code>（<code>ui_lvgl.c</code>, 4 104 行）</td><td>LVGL 四页界面（登记 / 识别 / 我的宠物 / 趋势）；中英双语字符串表 + 运行时实时切换；趋势页含彩色摄入柱状图、食欲折线与体况仪表。语言为 RAM-only（写 <code>0x818000</code> 会锁死 SoC，该地址被列为禁区）。</td></tr>
+<tr><td>推理</td><td><code>infer/</code>（<code>backend_tflm.cc</code>, 399 行）</td><td>两个独立 <code>MicroInterpreter</code>（身份 + 体况），张量竞技场置于 PSRAM；<strong>推理跑在专用工作线程</strong>，LVGL 主循环把帧交出去后继续渲染，因此触摸与预览在 1.3 s 推理期间不卡顿；识别为<strong>按需触发</strong>而非常开。</td></tr>
+<tr><td>身份</td><td><code>identity/</code>（419 行）</td><td>登记库、余弦匹配器（匹配阈值 0.45）、逐宠物 Flash 持久化（<code>0x800000</code> 魔数 <code>VPAW</code>）、宠物头像（<code>0x810000</code> 魔数 <code>VICN</code>）。</td></tr>
+<tr><td>存储/分析</td><td><code>store/</code>（<code>store_stub.c</code>, 625 行）</td><td>30 天摄入窗口、基线与食欲百分比、每日上限、体况记录，并生成给 Agent 用的 <code>status.md</code> / <code>feed_log.md</code>。<strong>关键修复</strong>：早期"日戳"只在演示按钮下推进，导致历史全部堆进"今天"、摄入量被高估，进而让喂食器<em>拒绝</em>投喂；改为 VP02 第 4 个头字 + 时钟驱动的 <code>vp_sync_day()</code>，且规定<strong>日戳只增不减</strong>（构建日锚点会让每次冷启动看起来像时间倒退）。</td></tr>
+<tr><td>语音</td><td><code>voice/</code>（<code>kws.cc</code> 822 行 + <code>mic.c</code> 2 370 行）</td><td>14 标签 KWS 模型 + MEAL→HOUR→CONFIRM 受限解码对话；<strong>对原始 softmax 做约束解码，绝不重归一化</strong>；三级门限 0.40 / 0.55 / 0.55，并用投票规则从三次亚阈值读数中救回一次对话。</td></tr>
+<tr><td>HAL</td><td><code>hal/</code></td><td>摄像头（OV5640 / V4L2 / net / mock 四种后端）与投料（步进 / mock）的抽象，使同一份应用代码可在真机与模拟环境下运行。</td></tr>
+<tr><td>Agent 层</td><td><code>agent/</code></td><td>1 个自定义 Skill、1 份心跳任务清单、3 个针对 <code>packages/ai_agent</code> 的补丁（详见 3.4.5 与 3.3.3）。</td></tr>
+</table>
+
+<h3>3.3 核心算法与技术原理</h3>
+
+<h4>3.3.1 端侧模型</h4>
+
+<table>
+<tr><th style="width:20%">项</th><th style="width:40%">身份识别模型</th><th>体况评估模型 / KWS</th></tr>
+<tr><td>任务</td><td>宠物个体识别（开集）</td><td>体况三分类（偏瘦/理想/偏胖）；语音关键词识别</td></tr>
+<tr><td>结构</td><td>MobileNetV3-Small 主干 + 空间注意力 <strong>TSFM</strong> 模块 + ArcFace 度量学习头</td><td>紧凑 3 类 CNN；14 标签 KWS 卷积网络</td></tr>
+<tr><td>输入 / 输出</td><td>128×128 → L2 归一化 <strong>128 维嵌入</strong></td><td>体况：3 类 logits；KWS：14 类 softmax</td></tr>
+<tr><td>框架</td><td colspan="2">训练：TensorFlow / Keras（<code>host/</code>）；推理：<strong>TensorFlow Lite for Microcontrollers</strong>（<code>apps/mlearning/tflite-micro</code>）</td></tr>
+<tr><td>量化</td><td colspan="2"><strong>INT8 训练后量化（PTQ）</strong>，算子全部为 TFLM 内置算子</td></tr>
+<tr><td>模型体积</td><td>1.44 MB（Flash <code>0x600000</code>）</td><td>626 KB（Flash <code>0x760000</code>）；KWS 模型内嵌在固件 rodata</td></tr>
+<tr><td>算子集</td><td colspan="2">ADD, CONV_2D, DEPTHWISE_CONV_2D, FULLY_CONNECTED, L2_NORMALIZATION, LOGISTIC, MEAN, MUL, PAD（9 个，均为默认 resolver 支持）</td></tr>
+<tr><td>算力占用</td><td colspan="2">单次推理 <strong>≈1.3 s</strong>（ESP-NN SIMD 算子）／ <strong>≈6.75 s</strong>（TFLM 参考算子），加速比 <strong>≈5×</strong>（真机实测）。张量竞技场与算子级时间分布来自前期 TFLM 摸底（QEMU，同类 INT8 CNN，<strong>非本模型在 S3 上的实测</strong>）：竞技场 <strong>84 420 B</strong>（非持久 55 296 B + 持久 29 124 B），计算分布 CONV_2D 约 84%、DEPTHWISE_CONV_2D 约 16%。两者的量级足以支撑"竞技场不是约束、卷积核才是瓶颈"的判断，据此确定了优化方向。</td></tr>
+<tr><td>内存放置</td><td colspan="2">两个 <code>.tflite</code> 以裸块写入 Flash，开机由 <code>spi_flash_read</code> 读入 PSRAM 缓冲；读取线程的栈必须位于内部 SRAM（<code>.bss</code>），因为 Flash 读会挂起 PSRAM 所依赖的 cache。</td></tr>
+</table>
+
+<p><strong>ESP-NN 集成方式与合规说明。</strong>1.3 s 这一数字依赖 Espressif 的 ESP-NN（Apache-2.0）SIMD 算子，而该集成修改的是<strong>公共仓</strong> <code>apps/mlearning/tflite-micro</code>。按大赛规则，公共仓改动以 fork + PR 形式提交到 <code>dev-ai-contest-2026</code>，<strong>不并入队伍仓</strong>。因此本队仓<strong>开箱即用时跑的是参考算子（≈6.75 s）</strong>，套用 ESP-NN fork 后为 ≈1.3 s。集成由三部分组成：（1）<code>apps/mlearning/esp-nn/</code> 引入库本体；（2）7 个算子包装（conv / depthwise_conv / fully_connected / pooling / add / mul / softmax）放入 <code>.../micro/kernels/esp_nn/</code>；（3）Makefile 块以 <code>-DESP_NN=1 -DCONFIG_NN_OPTIMIZED -mlongcalls</code> 编译并<strong>过滤掉对应的参考算子</strong>以避免符号重复。完整包装代码与复现步骤见 <code>docs/esp-nn/</code>。</p>
+
+<h4>3.3.2 云端模型（Agent 层）</h4>
+
+<table>
+<tr><th style="width:22%">项</th><th>内容</th></tr>
+<tr><td>模型 / 服务商</td><td>DeepSeek <code>deepseek-chat</code></td></tr>
+<tr><td>接口</td><td>OpenAI 兼容的 Chat Completions + <strong>function calling（tools）</strong>；控制台可见 <code>[llm] OpenAI API with tools (model: deepseek-chat, NNNNN bytes)</code></td></tr>
+<tr><td>端点与传输</td><td><code>https://api.deepseek.com:443</code>，经 <code>vela_tls</code> + <strong>mbedTLS，TLS 1.2</strong>；带连接池复用</td></tr>
+<tr><td>鉴权</td><td>Bearer API Key。<strong>Key 存放在设备 littlefs 的 <code>/data</code> 配置文件中，不写入源码、不进仓库</strong>。（开发期曾有一次明文 Key 落入日志的事故，已修复并在归集器中启用 <code>sk-*</code> / <code>ghp_*</code> / <code>Bearer *</code> 的自动脱敏。）</td></tr>
+<tr><td>链路</td><td>板载 USB <strong>CDC-NCM</strong> 网卡（<code>eth0</code>，<code>192.168.137.2</code>）→ Windows 主机共享上网 → 公网。同一根 USB 线同时承载 CDC-ACM 控制台。</td></tr>
+<tr><td>上行内容</td><td><strong>仅文本</strong>：系统提示 + Skill 摘要 + 工具 schema + 从设备本地 Markdown 读出的数字。<strong>没有任何图像或音频离开设备。</strong></td></tr>
+<tr><td>超时</td><td>LLM 420 s / socket 480 s（针对 MCU 侧真实往返整定）</td></tr>
+</table>
+
+<h4>3.3.3 关键机制</h4>
+
+<p><strong>（1）识别门控投喂状态机。</strong></p>
+<pre>
+if  匹配分数 ≥ 0.45  且  匹配到的是宠物 P
+and 存在一餐 M 属于 P，其时刻已到、今日未投、未被跳过
+and P 今日累计克数 + 本餐克数 ≤ P 的每日上限
+then 投料 (克数 / 每格克数) 格 → 记录 feed 事件 → 更新 status.md / feed_log.md
+else 界面提示"下一餐 18:00"，不投料
+</pre>
+
+<p><strong>（2）工具注册表裁剪——本项目单点收益最大的一处改动。</strong>问题的量化形态见 3.1.2⑥。做法是在 <code>tool_registry.c</code> 的 <code>s_excluded_tools</code> 中排除 20 个与喂食器无关的工具（4 个可穿戴 + 6 个飞书 + 8 个音乐 + 2 个快应用），工具数 36 → <strong>16</strong>，工具 JSON <strong>4 706 B</strong>。效果：可靠性从"时好时坏"变为 <strong>8/8 全通</strong>，端到端时延从 <strong>150–300 s 降到 3.6–35.6 s</strong>。</p>
+
+<div class="note"><strong>连带缺陷（值得写进报告的工程教训）：</strong>裁掉工具会<strong>留下调用方</strong>。这次裁剪孤立了 5 条自然语言快捷路径、1 段手写的 <code>music_search</code> 分支，以及每份系统提示里的飞书文案；而 <code>handle_nl_fast_path()</code> <strong>运行在 LLM 之前</strong>，因此指向未注册工具的快捷路径会把空白/错误结果<strong>当作最终答案</strong>返回给用户。检查方法固定为改动 <code>s_excluded_tools</code> 后 grep 一次被裁工具名，要求返回为空。</div>
+
+<p><strong>（3）三类"静默错误"的修复。</strong>它们的共同特征是<em>答案读起来很通顺，但不是从数据来的</em>：</p>
+<ul>
+<li><strong>心跳重放自己的历史</strong>——持久化的会话历史跨重启存活，导致第 2 次以后的心跳在"复读"。<code>history_json</code> 在循环<em>外</em>只 <code>calloc</code> 一次，因此需要显式写入 <code>'\0'</code>。</li>
+<li><strong><code>list_dir</code> 前缀匹配 + 本地工具短路</strong>——前缀是按绝对路径匹配的，而模型传的是相对路径；又因该工具位于本地短路集合中，<code>(no files found)</code> 被直接当成最终答案交给了主人。修法是<strong>同时接受两种路径写法</strong>（模型实际会用三种）。</li>
+<li><strong>陈旧的控制台历史抑制工具调用</strong>——修法不是裁剪历史，而是<strong>在消息数组中部插入一条 <code>system</code> 消息</strong>强制重新读取；磁盘上的旧历史原样保留，结果仍为 <code>iters=3 tools=2</code> 且答案正确。</li>
+<li><strong><code>ask</code> 在第 7 个词处截断</strong>——根因是 <code>nsh_commands.c</code> 的 <code>MAX_ARGS 8</code>，已提升到 <strong>32</strong>。</li>
+</ul>
+
+<p><strong>（4）验证方法论。</strong>本项目对"看起来能用"保持高度不信任，固化了三条判据：<code>END status=ok iters=N tools=M</code> 才是真信号（<code>iters=1 tools=0</code> 的完美回答等于历史重放）；<code>[skills] Skills summary: NNN bytes</code> 才证明 Skill 加载成功（<code>Skills system ready (N built-in)</code> 是编译期常量，什么也不证明）；判断回答是否真的来自远端，用 <strong>在运行中途登记一只新宠物</strong>——若下一次触发能发现它，就排除了 RAM 内 <code>llm_cache</code> 重放的可能。</p>
+
+<h4>3.3.4 openVela 系统能力的深度运用</h4>
+
+<p>VelaPaw 不是"跑在 BSP 上的一个薄应用"，而是纵向贯穿了 openVela 的图形、AI、多媒体、文件系统、USB 与网络子系统。三大能力方向<strong>全部落地</strong>：</p>
+
+<table>
+<tr><th style="width:14%">能力方向</th><th style="width:26%">使用的 openVela 组件</th><th>使用深度</th></tr>
+<tr><td><strong>AI</strong></td><td><code>apps/mlearning/tflite-micro</code>（含 <code>MATH_GEMMLOWP</code> / <code>MATH_RUY</code> / <code>MATH_KISSFFT</code> / <code>SYSTEM_FLATBUFFERS</code>）</td><td>应用直接链接并同时运行<strong>两个独立的 <code>MicroInterpreter</code></strong>（身份 + 体况），竞技场置于 PSRAM，推理在独立工作线程；并把 ESP-NN LX7 SIMD 算子接入该运行时（以 fork/PR 形式提交）。</td></tr>
+<tr><td><strong>AI Agent</strong></td><td><code>packages/ai_agent</code>（<code>CONFIG_EXAMPLES_AI_AGENT_VELA</code>）</td><td>真机运行，非模拟器。使用其工具体系、Skills 引擎、心跳（主动）通道、会话持久化与 <code>vela_tls</code>；并向框架回馈 <strong>3 个补丁、18 个文件、+570 / −190 行</strong>的修复（见 3.4.5）。</td></tr>
+<tr><td><strong>图形</strong></td><td><code>CONFIG_GRAPHICS_LVGL</code> + <code>LV_USE_NUTTX</code> + <code>LV_USE_NUTTX_TOUCHSCREEN</code>、<code>LCD_FRAMEBUFFER</code>、<code>VIDEO_FB</code></td><td>四页触摸界面；自制 Noto Sans SC 中文子集字库（14/16/20 三档）实现中英双语实时切换；趋势页自绘柱状图 / 折线 / 仪表（LVGL 9.1 无 <code>lv_meter</code>，改用 draw_dsc 字段而非 getter）。</td></tr>
+<tr><td><strong>多媒体</strong></td><td><code>CONFIG_AUDIO</code> + <code>AUDIO_I2S</code> + <code>AUDIO_ES8311</code> + <code>ESP32S3_I2S0</code>、<code>SYSTEM_NXLOOPER</code>；<code>DRIVERS_VIDEO</code> + <code>VIDEO</code></td><td>板载麦克风采集驱动 KWS 语音排程。<strong>向驱动层定位并修复了一个真实缺陷：ES8311 驱动从未编程 RX 的 TDM slot map，这是 RX 通道卡死的根因</strong>；同时发现 <code>nxlooper</code> 需要 <code>CONFIG_AUDIO_DRIVER_SPECIFIC_BUFFERS</code>。摄像头经 ESP32-S3 LCD_CAM + GDMA 接入 video 栈。</td></tr>
+<tr><td><strong>文件系统</strong></td><td><code>ESP32S3_SPIFLASH_LITTLEFS</code>、<code>FS_PROCFS</code>、<code>FS_TMPFS</code></td><td><code>/data</code> littlefs 分区承载 Agent 配置、Skill、会话与 VelaPaw 的喂食记录，跨重启与跨重烧固件保留。</td></tr>
+<tr><td><strong>USB / 网络</strong></td><td><code>USBDEV_COMPOSITE</code> + <code>CDCACM_COMPOSITE</code> + <code>CDCNCM_COMPOSITE</code>、<code>NET_TCP</code>、<code>NETDB_DNSCLIENT</code>、<code>CRYPTO_MBEDTLS</code></td><td>单根 USB 线同时枚举出控制台（CDC-ACM）与网卡（CDC-NCM），使"真机 + 联网 Agent + 可观测控制台"三者同时成立——这是本作品全部 Agent 证据得以录制的前提。</td></tr>
+<tr><td><strong>内核 / 内存</strong></td><td><code>XTENSA_IMEM_USE_SEPARATE_HEAP</code>、<code>XTENSA_IMEM_REGION_SIZE=0x48000</code>、<code>ARCH_HAVE_EXTRA_HEAPS</code>、<code>IOB_NBUFFERS/NCHAINS=64</code>、<code>IOB_THROTTLE=24</code></td><td>见 3.4.5 的四项平台级修复。</td></tr>
+</table>
+
+<h4>3.3.5 对 openVela 的改进建议</h4>
+
+<p>以下 6 条均来自本项目真机踩坑，按"对下一位开发者的价值"排序：</p>
+
+<ol>
+<li><strong>为 Xtensa LX7 提供官方的 TFLM 优化算子路径（ESP-NN）。</strong>树内现有 <code>cmsis-nn</code>（ARM）与 <code>nnlib-hifi4</code>（HiFi DSP），唯独缺少 LX7；而 ESP32-S3 是本届大赛的主力芯片。差距是 <strong>6.75 s → 1.3 s（5×）</strong>，直接决定"端侧视觉 AI 在 openVela 上是否可用"。建议以 Kconfig 开关的形式内置，而非让每支队伍各自 fork。</li>
+<li><strong><code>mallinfo()</code> / <code>free</code> / <code>memdump</code> 在刚启动的板子上会持锁挂死整颗芯片。</strong>本项目中 <code>ai_agent</code> 恰好把堆遍历放在 agent 任务的第一条语句，于是每一次 <code>ask</code> 都冻结全机（曾一度被误判为 PSRAM 问题）。建议：堆遍历接口增加非阻塞/超时形态，或至少在文档中标注其持锁语义。</li>
+<li><strong><code>ARCH_HAVE_EXTRA_HEAPS</code> 是 <code>select</code> 符号，永远不出现在 defconfig 中。</strong>而它恰恰是"任务栈不落在 PSRAM"的三个必要符号之一，缺一个就在首次 <code>ask</code> 时死锁。建议在 <code>XTENSA_IMEM_USE_SEPARATE_HEAP</code> 的帮助文本中显式提示这一依赖。</li>
+<li><strong>IOB 池默认容量与 <code>ai_agent</code> 的默认请求体不匹配。</strong>默认 36 个工具产生 19 KB 请求体，而默认 IOB 可用约 7.8 KB，症状是无超时的间歇挂死——最难排查的一类故障。建议：<code>ai_agent</code> 默认精简工具集，或在 MCU 目标上对请求体大小做启动期断言。</li>
+<li><strong><code>ai_agent</code> 的"本地工具短路"应保证与工具注册表一致。</strong><code>handle_nl_fast_path()</code> 早于 LLM 执行，一旦其目标工具被排除，错误结果会作为最终答案返回用户，且无任何告警。建议编译期校验短路表 ⊆ 已注册工具集。</li>
+<li><strong>几处"会静默毁掉整机"的配置项值得在 Kconfig 帮助文本中警示：</strong><code>CONFIG_RTC</code>（在本板上会杀死 USB 控制台）、<code>CONFIG_NETINIT_THREAD</code>（挂死整机）、<code>CONFIG_DEBUG_USB_INFO</code>（塞死控制台）；以及 <code>CONFIG_NSH_LINELEN</code> 会在约 80 字符处<strong>静默截断</strong>输入行，用 <code>echo … &gt;&gt; /long/path</code> provision 文件时会写出损坏内容而不报错。</li>
+</ol>
+
+<h3>3.4 系统实现</h3>
+
+<h4>3.4.1 软件 / 固件架构</h4>
+
+<pre>
+contest2026_043_CircuitForge/
+├── app/velapaw/          设备端应用（经 manifest linkfile 映射到 packages/demos/）
+│   ├── ui/               LVGL 界面 + i18n + CJK 字库          ui_lvgl.c 4 104 行
+│   ├── infer/            推理接口 + TFLM 后端 + 两个 .tflite  backend_tflm.cc 399 行
+│   ├── identity/         登记库 · 余弦匹配 · Flash 持久化      419 行
+│   ├── store/            进食历史 · 趋势 · 食欲分析            625 行
+│   ├── voice/            KWS + 语音对话 + 麦克风采集           kws.cc 822 / mic.c 2 370 行
+│   └── hal/              camera(4 后端) / feeder(2 后端)
+├── agent/                ai_agent 层：自定义 Skill · 心跳清单 · 3 个框架补丁
+├── board/                板文件：显示/摄像头/RTC/步进(esp32s3_st7789.c 961 行)
+│                         开机自启(esp32s3_appinit.c 284) · bringup(658) · defconfig(205)
+├── host/                 设备外训练与导出（TensorFlow/Keras，约 4 941 行 Python）
+├── hardware/             3D 打印投料器（OpenSCAD 源 + STL + BOM）
+├── docs/                 工程详解 · 基准测试 · ai_agent 说明（均中英双语）
+└── logs/                 AI Coding 会话日志（自动归集，未经手工编辑）
+</pre>
+
+<p>手写 C/C++ 代码合计 <strong>13 049 行</strong>（<code>app/</code> + <code>board/</code>，已排除生成的模型数组、字库表与素材）；主机侧 Python 约 <strong>4 941 行</strong>；对 <code>packages/ai_agent</code> 的补丁 <strong>+570 / −190 行</strong>；板级 defconfig <strong>205 行</strong>。构建产物 <code>nuttx.bin</code> <strong>1 561 920 B（1.49 MB）</strong>。</p>
+
+<p><strong>Flash 布局（16 MB）</strong></p>
+<table>
+<tr><th style="width:14%">偏移</th><th style="width:26%">内容</th><th style="width:12%">大小</th><th>说明</th></tr>
+<tr><td><code>0x000000</code></td><td>固件 <code>nuttx.bin</code></td><td>1.49 MB</td><td>openVela + 应用 + LVGL + TFLM + ai_agent</td></tr>
+<tr><td><code>0x180000</code></td><td><code>/data</code>（littlefs）</td><td>—</td><td>Agent 配置 / Key / Skill / 会话 / 喂食记录；跨重烧保留</td></tr>
+<tr><td><code>0x600000</code></td><td>身份模型 <code>velapaw.tflite</code></td><td>1.44 MB</td><td>开机读入 PSRAM</td></tr>
+<tr><td><code>0x760000</code></td><td>体况模型 <code>bcs.tflite</code></td><td>626 KB</td><td>开机读入 PSRAM</td></tr>
+<tr><td><code>0x800000</code></td><td>已登记宠物（魔数 <code>VPAW</code>）</td><td>8 KB</td><td>姓名 · 排程 · 面部嵌入</td></tr>
+<tr><td><code>0x810000</code></td><td>宠物头像（魔数 <code>VICN</code>）</td><td>32 KB</td><td>卡片缩略图</td></tr>
+</table>
+<div class="note"><strong>禁区：</strong><code>0x818000</code> 一经写入即锁死 SoC，已在工程中列为永久禁用地址（界面语言因此设计为 RAM-only）。</div>
+
+<h4>3.4.2 数据流与流程</h4>
+
+<pre>
+【喂食主流程 —— 全部在端侧，零网络依赖】
+
+  OV5640 帧 (LCD_CAM+GDMA)
+        │
+        ▼
+  预处理 → 128×128 INT8
+        │
+        ▼  [工作线程，≈1.3 s，UI 不阻塞]
+  TFLM 身份模型 ──► 128-D L2 归一化嵌入
+        │
+        ▼
+  与已登记宠物做余弦匹配 ──► (宠物 ID, 分数, 间距)
+        │
+        ├── 分数 < 0.45 ──────────────────► 不投料，界面提示"未识别"
+        │
+        ▼ 分数 ≥ 0.45
+  ┌─────────────── 双条件门控 ───────────────┐
+  │ ① 该宠物是否有一餐已到点、今日未投、未跳过？│
+  │ ② 今日累计 + 本餐克数 ≤ 每日上限？         │
+  └───────┬──────────────────────┬───────────┘
+       都满足                  任一不满足
+          │                        │
+          ▼                        ▼
+  28BYJ-48 步进转 N 格      界面提示"下一餐 18:00"
+  克数 = 格数 × 每格克数
+          │
+          ▼
+  写入历史 (littlefs) → 更新趋势 / 食欲基线 / 体况
+          │
+          ▼
+  生成 /data/ai_agent/velapaw/status.md  (逐宠物：今日克数·餐次·7日总量·
+                                          基线·食欲%·体况·每日上限)
+           /data/ai_agent/velapaw/feed_log.md (带时间戳与匹配分的投喂事件)
+
+【Agent 流程 —— 唯一联网的一层】
+
+  (A) 主动：心跳服务每 N 分钟触发
+        │  把 /data/ai_agent/HEARTBEAT.md 作为一条 system 消息注入
+        ▼
+  (B) 被动：控制台 ask "how much did bob eat today"
+        │
+        ▼
+  agent_loop  ──► 系统提示 + Skills 摘要(916 B) + 工具 schema(4 706 B)
+        │
+        ▼  TLS 1.2 / mbedTLS / vela_tls  ── CDC-NCM eth0 192.168.137.2 ──► DeepSeek
+        │
+        ▼ 模型返回 tool_calls
+  list_dir → read_file(status.md) → read_file(feed_log.md)   [本地执行，不出设备]
+        │
+        ▼ 把文件内容回灌，再次请求
+  最终回答 ──► 控制台 / 主动推送
+        │       （若全部正常：仅回 HEARTBEAT_OK，设备保持沉默）
+        ▼
+  会话落盘 /data/ai_agent/sessions/tg_&lt;chat_id&gt;.jsonl（console / heartbeat 分命名空间）
+</pre>
+<p class="caption">图 3-2　数据流与处理流程</p>
+
+<h4>3.4.3 硬件设计与适配</h4>
+
+<p><strong>是否完成全新硬件平台适配 / 驱动开发：<span style="color:#8a1f11">是</span>。</strong>Waveshare ESP32-S3-Touch-LCD-3.5-C 在 openVela 中<strong>没有现成板级支持</strong>。本项目在 <code>esp32s3-devkit</code> 基础上新增了一份完整的板级实现（<code>board/</code>，共 1 903 行 C 代码 + 205 行 defconfig），<strong>从零驱动了以下四类外设</strong>：</p>
+
+<table>
+<tr><th style="width:20%">外设</th><th style="width:26%">接法</th><th>驱动实现要点</th></tr>
+<tr><td><strong>ST7796 触摸屏</strong><br>320×480</td><td>硬件 SPI2 + GDMA，40 MHz；CLK=GPIO5, MOSI=GPIO1, CS=GPIO4；触摸 FT5x06 走 I²C0(SCL=7/SDA=8)</td><td>见下方"最硬的一处调试"。像素行需经<strong>内部 SRAM 中转缓冲</strong>——SPI DMA 无法 cache 一致地读 PSRAM；地址窗口设置从 11 次 SPI 调用<strong>合并为 5 次</strong>（LVGL 每次 <code>putarea</code> 都会重设窗口）。</td></tr>
+<tr><td><strong>OV5640 摄像头</strong></td><td>ESP32-S3 <strong>LCD_CAM</strong> 外设 + GDMA 接收通道，SCCB/I²C 配置；经 <strong>30 cm FFC + 1:1 转接板</strong>外引</td><td>预览曾出现<strong>90° 转置 + 紫色偏色</strong>，两个独立根因：（a）翻转/镜像位——须清除 <code>0x3820</code>/<code>0x3821</code> 的 bit1+bit2，转置本身只能在软件重采样中修正，寄存器结构上做不到；（b）<strong>BLC pattern 寄存器 <code>0x4514</code> 须置 <code>0x88</code></strong>。判别方法是一条可复用的规律：<strong>整帧色相是决定性判据——翻转/Bayer 相位错误只会红蓝互换、绝不可能丢掉绿色，因此"紫色（R+B 无 G）"必然是 <code>0x4514</code>，不是翻转位</strong>。</td></tr>
+<tr><td><strong>PCF85063 RTC</strong></td><td>I²C0，<strong>裸寄存器读写</strong></td><td>刻意<strong>不使用 <code>CONFIG_RTC</code></strong>——在本板上它会杀死 USB-CDC 控制台。开机时间种子设计为<strong>以构建日期为下限的地板值</strong>而非"早于 2017 即视为无效"的合理性判断：后者会把板子永久钉在某一天且无法纠正（<code>wall_set_min</code> 只改时分，nsh 没有 <code>date</code>）。</td></tr>
+<tr><td><strong>28BYJ-48 步进投料</strong></td><td>ULN2003 驱动板，IN1–IN4 = <strong>GPIO9 / 10 / 11 / 43</strong>；5 V 独立供电，<strong>仅共地</strong></td><td>软件走全步序列。<strong>IN4 必须用 GPIO43（U0TXD）而不是 GPIO44（U0RXD）</strong>——GPIO44 被钳位，线圈驱动不干净，这正是早期"电机嗡嗡响但不转"的根因（是引脚问题，不是相序问题）。GPIO43 可用是因为控制台走 USB-Serial/JTAG 而非 UART0。<strong>严禁把步进放在 GPIO12–16</strong>——那是 ES8311 编解码器独占的 I²S 总线（未引到任何排针），已被语音功能占用。</td></tr>
+<tr><td><strong>ES8311 音频</strong></td><td>I²S0：MCLK=12, BCLK=13, DIN=14, WS=15, DOUT=16；16 kHz</td><td>为打通麦克风采集，<strong>定位并修复了驱动层缺陷：从未编程 RX 的 TDM slot map</strong>（RX 通道卡死的真正根因）。另有 PSRAM cache 陷阱迫使采用 18 缓冲池的双 slot 流（活动 slot 每次采集翻转）。</td></tr>
+</table>
+
+<p><strong>最硬的一处调试：硬件 SPI 屏幕。</strong>症状是全屏写正常、任何局部窗口永不出图，而完全相同的字节序列走位翻转却正常；该问题<strong>熬过了约 60 轮编译</strong>（帧缓冲镜像、DMA 开关、软件 CS、PSRAM 一致性、引脚强制路由等全部无效）。</p>
+<ul>
+<li><strong>方法——测量，而不是猜。</strong>SPI 引脚没有引到排针，无法直接探测，于是让板级固件通过 GPIO 矩阵把 <code>FSPID_OUT</code>/<code>FSPICLK_OUT</code> <strong>镜像到空闲排针</strong>，另加一路触发标记，用逻辑分析仪（sigrok/PulseView + FX2）抓取。<strong>决定性的第一步是"地面真值"测试</strong>：先在探针脚上输出 4 路已知方波，读不干净就绝不相信任何采集——这一步立刻暴露了一个接线/接地问题，此前的"乱码"全部源于此；只有在此之后，真正的采集才是可信的。</li>
+<li><strong>发现。</strong>解码结果显示 ESP32 发出的是<strong>逐字节完全正确</strong>的 <code>CASET 00 28 00 8B / RASET 00 28 00 8B / RAMWR / pixels</code>，DC 对齐正确、每字节恰好 8 个干净时钟沿、零毛刺。<strong>外设自始至终是清白的。</strong></li>
+<li><strong>根因。</strong>该面板的<strong>片选被硬件拉低</strong>，因此它永远无法借助 CS 边沿重新同步位计数器——它只会一直数时钟沿。固件先用位翻转完成面板初始化，<em>之后</em>才把引脚交给 SPI 外设；这次<strong>引脚交接会让时钟多出/少掉一个沿</strong>，从那一刻起面板就错开了一位。此后每条命令都被解码成垃圾，<code>RAMWR</code> 永不被识别，没有像素进入 GRAM，屏幕就一直显示位翻转最后画上去的内容——看起来<em>正好像</em>"硬件 SPI 什么都没画"。</li>
+<li><strong>修复。</strong><strong>先</strong>把引脚交给 SPI 外设，<strong>再硬件复位面板</strong>（软件复位不行——复位命令自己就会被读错），然后整套初始化全部走 SPI。面板在 SPI 所有权下重新同步之后，局部窗口即正常渲染。</li>
+<li><strong>收益。</strong>路径打通后，显示彻底脱离位翻转，改用 40 MHz 硬件 SPI2 + GDMA：全屏 480×320 重绘 <strong>≈246 ms → ≈61 ms（4×）</strong>。一个看似死路的 bug 变成了性能提升。</li>
+</ul>
+
+<p><strong>机械设计（<code>hardware/</code>）。</strong>重力料斗 → 叶轮转子 → 落料槽 → 食盆。全部零件为参数化 OpenSCAD 源码 + 可直接打印的 STL（PLA/PETG，0.2 mm 层高，3 圈外壁，无支撑），含 JLC 代打件清单。摄像头从主板拔下，经 30 cm FFC + 1:1 转接板装在跨过落料槽的 <code>cam_mast</code> 双腿支架上的 <code>cam_pod</code> 内，使<strong>屏幕朝向主人、镜头朝向宠物</strong>。<span style="color:#8a1f11"><strong>安全警示：FFC 反插在上电瞬间是致命的</strong></span>——板端第 N 脚会对上相机第 25−N 脚，把电源轨直接短到数据/地脚；且该相机模组<strong>内部地未共通</strong>，无法"穿过相机"用万用表确认方向，只能依据丝印 <code>1</code>/<code>24</code> 与裸铜连通性核对（已在 2026-07-30 逐点验证）。</p>
+
+<h4>3.4.4 应用 / 交互端设计</h4>
+
+<p><strong>本产品没有配套 App、没有账号、没有云端控制台</strong>——这是产品定位的一部分，而不是功能缺失。交互全部发生在设备本体上：</p>
+
+<table>
+<tr><th style="width:16%">交互面</th><th>设计</th></tr>
+<tr><td><strong>触摸屏（主交互）</strong></td><td>四页 LVGL 界面：<strong>登记</strong>（拍几张近距正脸照 → 存平均嵌入）· <strong>识别</strong>（实时预览 + 匹配结果 + 投喂）· <strong>我的宠物</strong>（编辑姓名/餐次/克数/每日上限/单餐跳过，删除，头像）· <strong>趋势</strong>（摄入柱状图、食欲折线、体况仪表）。上电<strong>直接进入界面</strong>（<code>board_app_initialize()</code> 自启），无需连接串口——它的行为像一台家电，而不是一块开发板。</td></tr>
+<tr><td><strong>语音（免触摸）</strong></td><td>MEAL→HOUR→CONFIRM 三步对话，在"编辑宠物"页点击开始后进行，用端侧 KWS 模型识别受限词表。真机端到端验证通过（例：COMMIT meal 2 = 08:00）。</td></tr>
+<tr><td><strong>双语</strong></td><td>中 / EN 应用内实时切换，含自制 Noto Sans SC 子集字库；全部界面文案、文档与 README 均为中英双语。</td></tr>
+<tr><td><strong>Agent 对话（控制台）</strong></td><td><code>ask &lt;自然语言&gt;</code>，例：<code>ask how much did bob eat today</code>。回答来自设备本地记录，非预置文案。</td></tr>
+<tr><td><strong>Agent 主动推送</strong></td><td>心跳触发，<strong>无人值守</strong>；只在越阈值时开口。这是"不需要主人走到屏幕前"的那一层。</td></tr>
+</table>
+
+<h4>3.4.5 自定义 Skill（AI 硬件产品创新赛道硬性要求）</h4>
+
+<p><strong>Skill 文件：</strong><code>velapaw-feeding-digest.md</code>（喂食简报）<br>
+<strong>仓库位置：</strong><code>agent/skills/velapaw-feeding-digest.md</code><br>
+<strong>运行时路径：</strong><code>/data/ai_agent/skills/velapaw-feeding-digest.md</code></p>
+
+<div class="note"><strong>路径说明：</strong>赛道指南给出的运行时 Skill 目录为 <code>/data/agent/skills/</code>；本实现使用的是 <strong><code>/data/ai_agent/skills/</code></strong>，因为这是当前 <code>packages/ai_agent</code> 框架在设备上<em>实际</em>扫描的目录（控制台日志 <code>[skills] Skill exists: /data/ai_agent/skills/…</code> 可证）。二者语义等价，如需对齐规范目录，只是一次挂载点重命名。</div>
+
+<p><strong>Skill 定义（全文）：</strong></p>
+<pre>
+# VelaPaw Feeding Digest
+Report pet feeding, appetite and body condition.
+
+## When to use
+When asked about a pet, feeding, how much a pet ate, appetite,
+body condition or feeder status. Also used by the periodic heartbeat check.
+
+## How to use
+1. read_file /data/ai_agent/velapaw/status.md
+   Per pet it gives grams today, meal count, 7-day total, baseline,
+   appetite percent, body condition, daily limit.
+2. read_file /data/ai_agent/velapaw/feed_log.md
+   Recent feed events with timestamps and match score.
+3. Report per pet: grams today vs the daily limit, appetite vs baseline,
+   and body condition.
+4. Flag a concern ONLY if any of these is true:
+   - appetite below 50 percent of baseline
+   - grams today reached the owner daily limit
+   - body condition is not ideal
+   - no feed event today in the log
+5. Otherwise say the pet is on track, one sentence.
+6. Use only numbers from those files. Never invent.
+</pre>
+
+<p><strong>触发场景（两条，均已在真机上验证）：</strong></p>
+
+<ol>
+<li><strong>被动触发 —— 主人提问。</strong>控制台输入 <code>ask how is jay doing today</code> 一类问题时命中 <em>When to use</em>，Agent 依次 <code>list_dir</code> → <code>read_file(status.md)</code> → <code>read_file(feed_log.md)</code>，据实际数字作答。真机实录：<code>[llm] OpenAI API with tools (model: deepseek-chat, 11559 bytes)</code> → <code>END status=ok iters=3 tools=2 llm_ms=4340 elapsed=5s</code>，回答内容为"<em>Today: 15 g in 1 meal / Appetite: 34% of baseline (44 g/day) / Owner daily limit: 60 g/day</em>"。</li>
+
+<li><strong>主动触发 —— 心跳健康巡检（本赛道要求的"主动 + 执行"场景）。</strong><code>/data/ai_agent/HEARTBEAT.md</code> 中的任务项为：<em>"Run the VelaPaw Feeding Digest skill. If it finds a concern, notify the owner with numbers. If all is on track, reply HEARTBEAT_OK only."</em> 心跳服务（<strong>用的是 heartbeat 服务，而非 cron</strong>）按固定间隔把该文件作为一条 <code>system</code> 消息注入会话并触发一轮完整的 agent loop。<strong>沉默是正常状态</strong>——只有越过 Skill 第 4 条的四个阈值之一才会推送。已捕获的<strong>无人值守</strong>实录：<code>iters=4 tools=3</code>，4 次 <code>read_file</code>，请求体依次 <strong>15 592 → 16 209 → 17 697 → 18 760 B</strong>。</li>
+</ol>
+
+<p><strong>为证明"这是真的在跑，而不是重放"</strong>，采用了一条可复现的判据：<strong>在心跳运行过程中登记一只新宠物</strong>，若下一次触发能够发现它，则排除 RAM 内 <code>llm_cache</code> 重放的可能。该测试已通过——每一次触发都是真实的远端调用。（此前确实存在"第 2 次以后的触发被缓存重放"的缺陷，已通过按 <code>chat_id</code> 绕过缓存修复。）</p>
+
+<p><strong>四项平台级修复（<code>agent/patches/</code>，3 个补丁 / 18 个文件 / +570 −190 行）</strong>——没有它们，<code>ai_agent</code> 在这块板子上根本跑不起来：</p>
+
+<table>
+<tr><th style="width:6%">#</th><th style="width:26%">问题</th><th>修复</th></tr>
+<tr><td>1</td><td><code>ask</code> 第一次调用即<strong>冻结整颗芯片</strong></td><td>根因：<code>agent_loop</code> 的 pthread 栈落在 <strong>PSRAM（<code>0x3c…</code>）</strong>，而 littlefs 的 Flash 读会关闭 PSRAM 所依赖的 cache。修复为三个 Kconfig 符号：<code>XTENSA_IMEM_USE_SEPARATE_HEAP</code> + <code>XTENSA_IMEM_REGION_SIZE=<strong>0x48000</strong></code> + 极易遗漏的 <code>ARCH_HAVE_EXTRA_HEAPS</code>。<strong><code>0x30000</code> 只够止住冻结但不够实际出货</strong>——所有任务与 pthread 栈都从这个堆里切，ai_agent 的任务加 6 个 pthread 再叠上 velapaw 的 48 KB 栈会让 <code>pthread_create</code> 返回 <code>ENOMEM</code>。</td></tr>
+<tr><td>2</td><td>堆遍历杀死刚启动的板子</td><td><code>agent_loop_task</code> 的第一条语句就是 <code>mallinfo()</code>，而 <code>free</code>/<code>memdump</code>/<code>mallinfo</code> 在刚启动的板子上会持堆锁挂死整机。改为不遍历堆的状态上报。（那个"676 MB 幽灵节点"是坏掉的遍历本身，不是内存损坏。）</td></tr>
+<tr><td>3</td><td>IOB 耗尽导致请求无声挂死</td><td><code>IOB_NBUFFERS</code> / <code>IOB_NCHAINS = 64</code>、<code>IOB_THROTTLE = 24</code>（<strong>160 条链虽然更大但无法启动</strong>），并需主机先 ping 板子把 ARP 打通。1420 vs 1514 的 MTU 差异<strong>真实存在但不是本故障的原因</strong>，不应去"修" <code>PKTSIZE</code>。</td></tr>
+<tr><td>4</td><td>LLM 超时把成功的回答丢掉</td><td><code>AGENT_LLM_TIMEOUT_SEC=420</code>、socket <code>480</code>。原 60 s 默认值会丢弃一次已成功返回的 62.6 s 回答，表面症状却是"请求超时"。</td></tr>
+</table>
+
+<h3>3.5 系统测试与结果分析</h3>
+
+<h4>3.5.1 测试环境</h4>
+
+<table>
+<tr><th style="width:20%">项</th><th>配置</th></tr>
+<tr><td>被测硬件</td><td>Waveshare ESP32-S3-Touch-LCD-3.5-C（ESP32-S3-WROOM-1-N16R8：8 MB PSRAM Octal @80 MHz，16 MB Flash）+ OV5640（30 cm FFC）+ 28BYJ-48/ULN2003（独立 5 V ≥2 A 供电，共地）+ 3D 打印投料机构</td></tr>
+<tr><td>固件</td><td>openVela / NuttX，<code>esp32s3-devkit:waveshare_lcd</code>；<code>nuttx.bin</code> 1 561 920 B</td></tr>
+<tr><td>构建环境</td><td>VMware 内 Linux 虚拟机，<code>./build.sh esp32s3-devkit:waveshare_lcd -j4</code>；Windows 11 主机经 <code>esptool</code> 烧录</td></tr>
+<tr><td>控制台 / 网络</td><td>单根 USB：CDC-ACM 控制台（<code>nsh&gt;</code> / <code>vela&gt;</code>）+ CDC-NCM 网卡 <code>eth0 192.168.137.2/24</code>，经 Windows 主机 ICS 共享上网</td></tr>
+<tr><td>云端</td><td>DeepSeek <code>deepseek-chat</code>，TLS 1.2 / mbedTLS</td></tr>
+<tr><td>主机侧评测</td><td>模型可分性评测：验证集 <strong>1 559 张图 / 39 个个体</strong>，INT8 模型，50 次时延采样</td></tr>
+</table>
+
+<h4>3.5.2 功能测试</h4>
+
+<table>
+<tr><th style="width:34%">用例</th><th style="width:10%">结果</th><th>判据 / 证据</th></tr>
+<tr><td>上电自启进入喂食界面</td><td>✅</td><td>无需连接串口，<code>board_app_initialize()</code> 自启；演示视频全程可见</td></tr>
+<tr><td>登记新宠物（多张照片 → 平均嵌入）</td><td>✅</td><td>真机；登记后立即可被识别，<strong>无需重训或重烧固件</strong></td></tr>
+<tr><td>识别并按只投喂</td><td>✅</td><td>真机；识别 + 排程双条件同时满足才投料</td></tr>
+<tr><td>排程门控：未到点不投</td><td>✅</td><td>界面提示"下一餐 18:00"</td></tr>
+<tr><td>每餐每天至多一次 / 单餐跳过</td><td>✅</td><td>真机</td></tr>
+<tr><td>每日克数上限</td><td>✅</td><td>真机；Agent 侧回读确认"Owner daily limit: 60 g/day"</td></tr>
+<tr><td>体况评估（三分类）</td><td>✅</td><td>真机，第二个 TFLM 解释器</td></tr>
+<tr><td>进食趋势 + 食欲骤降告警</td><td>✅</td><td>趋势页柱状图/折线/仪表；Agent 读出"Appetite: 34% of baseline"</td></tr>
+<tr><td>步进电机投料（逐格定量）</td><td>✅</td><td>真机（GPIO9/10/11/43）；机械装配完成</td></tr>
+<tr><td>语音排程对话 MEAL→HOUR→CONFIRM</td><td>✅</td><td>真机端到端（例：COMMIT meal 2 = 08:00）</td></tr>
+<tr><td>中英双语实时切换</td><td>✅</td><td>真机</td></tr>
+<tr><td>断电后排程 / 宠物 / 头像保留</td><td>✅</td><td>硬件 RTC + Flash 持久化</td></tr>
+<tr><td>断网时喂食器全功能可用</td><td>✅</td><td>识别 / 排程 / 投料 / 界面 / 语音均不依赖网络</td></tr>
+<tr><td><code>ai_agent</code> 在真机启动并加载 Skill</td><td>✅</td><td><code>[tools] Tools JSON built (16 builtin + 0 providers)</code>、<code>[skills] Skill exists: /data/ai_agent/skills/…</code>、<code>[agent] Tools JSON loaded: 4706 bytes</code></td></tr>
+<tr><td><code>ask</code> 基于真实设备数据作答</td><td>✅</td><td><code>END status=ok iters=3 tools=2</code>（<code>iters=1 tools=0</code> 即判为重放，不计通过）</td></tr>
+<tr><td>主动推送<strong>无人值守</strong>触发</td><td>✅</td><td>已捕获：<code>iters=4 tools=3</code>，4 次 <code>read_file</code></td></tr>
+<tr><td>主动推送"一切正常时保持沉默"</td><td>✅</td><td>阈值未越时仅回 <code>HEARTBEAT_OK</code>，不打扰主人</td></tr>
+<tr><td>Skill 拒绝臆造数字</td><td>✅</td><td>Skill 第 6 条 + 回答中的数字与 <code>status.md</code> 逐项一致</td></tr>
+</table>
+
+<h4>3.5.3 性能测试</h4>
+
+<table>
+<tr><th style="width:30%">指标</th><th style="width:16%">实测</th><th style="width:16%">对照</th><th>说明</th></tr>
+<tr><td><strong>身份模型单次推理时延</strong></td><td><strong>≈1 310 ms</strong></td><td>≈6 750 ms<br>（TFLM 参考算子）</td><td>ESP-NN LX7 SIMD 算子，<strong>加速 ≈5×</strong>。推理跑在独立线程，<strong>UI 不阻塞</strong>。</td></tr>
+<tr><td>识别帧率（按需模式）</td><td>≈0.76 次/s</td><td>≈0.15 次/s</td><td>识别为宠物到盆时按需触发，非常开推理；这是刻意的功耗与算力设计。</td></tr>
+<tr><td><strong>全屏重绘（480×320）</strong></td><td><strong>≈61 ms</strong></td><td>≈246 ms<br>（GPIO 位翻转）</td><td>40 MHz 硬件 SPI2 + GDMA，<strong>提速 ≈4×</strong>；窗口设置由 11 次 SPI 调用合并为 5 次。</td></tr>
+<tr><td>张量竞技场占用<br><span style="font-size:9pt;color:#666">（前期摸底，QEMU）</span></td><td><strong>84 420 B</strong></td><td>配置 204 800 B</td><td>非持久 55 296 B + 持久 29 124 B。<strong>非 S3 实测值</strong>，但足以判定在 8 MB PSRAM 下竞技场不是本项目的约束。</td></tr>
+<tr><td>计算分布（单次推理）<br><span style="font-size:9pt;color:#666">（前期摸底，QEMU）</span></td><td>CONV_2D 84%<br>DEPTHWISE 16%</td><td>—</td><td>643 819 / 122 680 / 768 105 ticks；<code>AllocateTensors</code> 24 860 ticks（一次性）。<strong>非 S3 实测值</strong>；用于判定优化必须落在 INT8 卷积核上，该判断随后被 S3 上 5× 的实测加速验证。</td></tr>
+<tr><td>固件体积</td><td><strong>1 561 920 B</strong></td><td>16 MB Flash</td><td>含 openVela + LVGL + TFLM + <code>ai_agent</code> + 应用；两个模型另占 2.05 MB 裸 Flash。</td></tr>
+<tr><td><strong>Agent 端到端响应</strong></td><td><strong>3.6 – 35.6 s</strong></td><td><strong>150 – 300 s</strong><br>（工具裁剪前）</td><td>典型实录：<code>llm_ms=4340 elapsed=5s</code>、<code>llm_ms=5260 elapsed=7s</code>。</td></tr>
+<tr><td>Agent 请求体大小</td><td>11 312 → 12 667 → 14 008 B<br>（3 轮 <code>ask</code>）</td><td>19 391 B<br>（裁剪前单轮）</td><td>工具 schema 由 9 946 B 降至 <strong>4 706 B</strong>；Skills 摘要 916 B。</td></tr>
+<tr><td>Agent 缓冲配置</td><td>ctx 8 192 / hist 8 192 / tool 8 192 B；工具输出池 2 × 16 384 B</td><td>—</td><td>控制台启动日志可见。</td></tr>
+<tr><td>网络缓冲</td><td>IOB 64 × 196 = 12 544 B<br>（THROTTLE 24 后可用 ≈7 840 B）</td><td>默认值不足</td><td>这一比值是 3.1.2⑤ 那个"间歇挂死"的量化根因。</td></tr>
+<tr><td>主机侧模型时延</td><td>fast 0.5 ms / accurate 0.6 ms（p95 0.6 / 0.7 ms）</td><td>—</td><td><strong>主机 CPU 相对值，不代表 ESP32-S3</strong>；仅用于 A/B 比较。</td></tr>
+</table>
+
+<h4>3.5.4 可靠性与准确性</h4>
+
+<p><strong>（a）识别可分性（主机侧，验证集 1 559 张图 / 39 个个体，INT8）</strong></p>
+
+<table>
+<tr><th style="width:34%">指标</th><th style="width:20%">fast 模型</th><th style="width:20%">accurate 模型（已选用）</th></tr>
+<tr><td>模型体积</td><td>1 312 KB</td><td><strong>1 403 KB</strong></td></tr>
+<tr><td>算子数</td><td>8</td><td>9</td></tr>
+<tr><td>类内余弦相似度</td><td>0.346</td><td>0.347</td></tr>
+<tr><td>类间余弦相似度</td><td>0.103</td><td><strong>0.023</strong></td></tr>
+<tr><td>可分间距</td><td>0.243</td><td><strong>0.324</strong></td></tr>
+<tr><td>EER 阈值</td><td>0.130</td><td>0.070</td></tr>
+<tr><td><strong>等错误率 EER</strong></td><td>0.328</td><td><strong>0.291</strong></td></tr>
+</table>
+
+<p class="caption">选用 accurate 模型的依据是<strong>可分间距</strong>（0.324 vs 0.243）与更低的 EER，代价是 +91 KB 体积与 +1 个算子——在 16 MB Flash / 8 MB PSRAM 的预算下这个代价可以忽略。</p>
+
+<div class="note"><strong>对该结果的诚实解读：</strong>EER 0.291 是在<strong>公开宠物数据集的 39 个个体、开集条件</strong>下测得的<em>下界式</em>指标，它衡量的是"任取两张图判断是否同一只"的难度，而<strong>不是产品实际场景的准确率</strong>。真实场景要容易得多：家庭中通常只有 2–4 只宠物、登记照由主人近距离正脸拍摄、匹配阈值取 0.45（高于 EER 阈值，偏向"宁可拒识、不可误投"）。误报/漏报的主导因素<strong>不是阈值，而是登记质量</strong>——这是开集度量学习的结构性特征：通用特征提取器天然难以拒绝任意非宠物物体，因此产品把杠杆放在引导用户拍出紧凑、光照良好的正脸照。<strong>尚未完成的量化工作：</strong>在最终相机姿态（<code>cam_mast</code> 支架、当前色彩标定）下针对自家 3 只宠物的误报率 / 漏报率长期统计。当前 3 只宠物的嵌入是在<strong>存在紫色偏色的固件版本</strong>下采集的，<code>0x4514</code> 修复后需要重新登记，此前的现场准确率数据不具备可比性，因此本报告<strong>不给出</strong>该数字，而不是给一个不可信的数字。</div>
+
+<p><strong>（b）Agent 可靠性</strong></p>
+
+<table>
+<tr><th style="width:34%">指标</th><th style="width:20%">工具裁剪前</th><th style="width:20%">裁剪后</th><th>说明</th></tr>
+<tr><td>连续 <code>ask</code> 成功率</td><td>间歇性失败<br>（无超时挂死）</td><td><strong>8 / 8</strong></td><td>判据是 <code>END status=ok</code> 行，不是回答读起来是否通顺</td></tr>
+<tr><td>端到端时延</td><td>150 – 300 s</td><td><strong>3.6 – 35.6 s</strong></td><td>—</td></tr>
+<tr><td>TLS 连接中断恢复</td><td colspan="2"><strong>3 / 3 带内恢复</strong></td><td>空闲 keep-alive 被服务端关闭 → 零字节响应 → <code>vela_tls</code> 自动重连。<strong>此现象经确认不是缺陷</strong>。</td></tr>
+<tr><td>主动推送真实性</td><td colspan="2"><strong>每次触发均为真实远端调用</strong></td><td>用"运行中途登记新宠物、看下一次触发能否发现"证伪缓存重放</td></tr>
+</table>
+
+<p><strong>（c）异常恢复与稳定性</strong></p>
+<ul>
+<li><strong>断电恢复：</strong>硬件 RTC 保时间，littlefs 保宠物 / 排程 / 头像 / 进食历史 / Agent 会话与 Key。<code>/data</code> 起始于 <code>0x180000</code>，而固件只写到约 <code>0x17ec80</code>，<strong>因此重新烧录固件也不会丢数据</strong>。</li>
+<li><strong>网络异常：</strong>见 3.2.3 降级表。LLM 失败时输出明确的 <code>[llm] API error NNN:</code>，<strong>不产生虚构回答</strong>。</li>
+<li><strong>内存波动：</strong>本项目<strong>刻意不报告运行时堆余量数字</strong>——原因见 3.4.5 修复 #2：在这块板子上堆遍历接口会持锁杀死整机，修复方式是改为不遍历堆的状态上报，因此固件打印的堆数值是<strong>假定值而非实测值</strong>，作为量化指标引用会构成误导。真正约束内存的是编译期的 <code>XTENSA_IMEM_REGION_SIZE</code>：<code>0x30000</code> 时 <code>pthread_create</code> 返回 <code>ENOMEM</code>，<code>0x48000</code> 可稳定承载 ai_agent 任务 + 6 个 pthread + velapaw 的 48 KB 栈——<strong>这个"能/不能创建线程"的二值结果，比一个不可信的堆余量数字更有信息量</strong>。</li>
+<li><strong>连续运行时长：</strong>已完成的最长受控观测为演示录制中的 <strong>600 s（<code>sleep 600</code>）</strong> 无人值守区间，期间心跳按期触发、控制台无异常、Agent 正常应答。<strong>更长时间的老化测试（24 h / 7 d）尚未进行</strong>，列入 3.7.3 的后续工作，本报告不做外推。</li>
+<li><strong>功耗：</strong><strong>尚未使用功率分析仪做逐工况测量</strong>，因此不给出数字。设计上的低功耗依据是"识别按需触发而非常开推理"（避免 1.3 s 级推理连续占用双核）与"投料仅在门控通过时短时驱动步进"；步进电机 ≈240 mA/相由独立 5 V 供电承担，不经过主板。定量测量列入后续工作。</li>
+</ul>
+
+<h4>3.5.5 结果分析</h4>
+
+<p>把测试结果放回 3.1.2 的六个难点：</p>
+<ol>
+<li><strong>难点①（算力）已解决且量化：</strong>6.75 s → 1.31 s。关键在于前期用 profiler 先确定"84% 的时间在 CONV_2D"，才把全部工程投入压在算子库上，而不是四处调参。<strong>先测量、后优化</strong>是本项目最有回报的一条方法论。</li>
+<li><strong>难点②（不重训）已解决：</strong>登记是纯运行时操作，真机验证通过。代价是拒识能力弱于闭集分类器，这一点在 3.5.4 中如实披露而非回避。</li>
+<li><strong>难点③（大模型加载）已解决：</strong>裸 Flash + PSRAM，附带产出了"Flash 读会挂 cache"这条对任何 ESP32-S3 + PSRAM + 大模型项目都通用的经验。</li>
+<li><strong>难点④（SPI 屏幕）已解决并转化为 4× 收益：</strong>60 轮盲试的失败与一次逻辑分析仪测量的成功，其差别不在努力程度，而在于是否<strong>把猜测换成了观测</strong>。</li>
+<li><strong>难点⑤（请求体 vs IOB）已解决且是单点收益最大项：</strong>可靠性"时好时坏 → 8/8"，时延 150–300 s → 3.6–35.6 s，仅靠删掉 20 个用不上的工具。这条经验对所有在 MCU 上跑 <code>ai_agent</code> 的团队都适用。</li>
+<li><strong>难点⑥（静默错误）已解决，并沉淀为判据：</strong>本项目最重要的产出之一是三条"读日志而不是读文案"的验收判据（<code>END status=</code> / <code>Skills summary: NNN bytes</code> / 运行中途注入新数据）。它们是把"看起来能用"和"确实在用"分开的工具。</li>
+</ol>
+
+<h3>3.6 AI-Native 开发说明</h3>
+
+<p>本项目<strong>全程采用 AI 辅助开发</strong>，会话日志由组委会预装的 <code>contest-log-collector</code> 自动归集到 <code>logs/KingMbewe/</code>，<strong>未经任何手工编辑</strong>。以下数据均由脚本从该日志目录与本机原始会话记录直接统计得出。</p>
+
+<table>
+<tr><th style="width:22%">项目</th><th>数据</th></tr>
+<tr><td><strong>AI Coding 代码占比</strong></td>
+<td><strong>≈100%</strong>（按"经由 AI 会话产出/修改"口径）。仓库中手写 C/C++ <strong>13 049 行</strong>（<code>app/</code> + <code>board/</code>，已排除生成的模型数组、CJK 字库表与素材）、主机侧 Python <strong>约 4 941 行</strong>、对 <code>packages/ai_agent</code> 的补丁 <strong>+570 / −190 行</strong>、板级 defconfig <strong>205 行</strong>，合计约 <strong>18 800 行</strong>，全部在 AI 结对会话中产出并逐次在真机上验证。人类承担的部分是：硬件搭建与接线、逻辑分析仪 / 万用表实测、每一轮真机烧录与现象判读、以及方向决策与对 AI 结论的证伪——本报告中多处"某某说法已被推翻"的记录，正是这道人工核验环节的产物。</td></tr>
+
+<tr><td><strong>使用的 AI 工具</strong></td>
+<td><strong>Claude Code</strong>（CLI + VS Code 扩展）为唯一编码工具。会话中出现的模型：<code>claude-opus-5</code>、<code>claude-opus-4-8</code>、<code>claude-sonnet-5</code>、<code>claude-fable-5</code>。<br>
+日志规模：<strong>17 个 JSONL 文件 / 78.7 MB / 55 255 条归集事件</strong>，其中 user 7 559 条、assistant 14 963 条、tool 32 733 条，跨 <strong>2026-07-08 → 2026-09-04</strong> 共 15 个归集日期目录。<br>
+工具调用分布（前列）：<code>Bash</code> 5 272、<code>PowerShell</code> 4 340、<code>Edit</code> 2 436、<code>Read</code> 2 263、<code>Grep</code> 713、<code>Write</code> 458、<code>AskUserQuestion</code> 247、<code>TodoWrite</code> 168、<code>ToolSearch</code> 126、<code>WebFetch</code> 89、<code>Glob</code> 79、<code>Artifact</code> 38、<code>ScheduleWakeup</code> 34、<code>WebSearch</code> 29、<code>Monitor</code> 22、<code>Skill</code> 17。<code>Bash</code> 与 <code>PowerShell</code> 合计 9 612 次的占比，直接反映了这是一个<strong>以"编译—烧录—在真机上观察"为主循环</strong>的硬件项目，而非纯软件项目。</td></tr>
+
+<tr><td><strong>MCP 工具使用情况</strong></td>
+<td><strong>设备端：未使用。</strong><code>CONFIG_AI_AGENT_MCP</code> 在板级 defconfig 中<strong>显式关闭</strong>（连同 Feishu / WeChat / MQTT / Node），这是一个刻意的取舍——见 3.3.3，请求体大小是本项目在 MCU 上最硬的约束，任何非必要的工具/协议扩展都会挤占 IOB 预算。<br>
+<strong>开发端：配置了 2 个 MCP 连接器</strong>（claude.ai 连接器、Google Drive），用于设计稿与数据集资料的读取；因需要交互式 OAuth 授权，在本项目的自动化会话中<strong>未实际调用</strong>。<br>
+因此本项目的 MCP 使用量诚实记为 <strong>0 次调用</strong>。</td></tr>
+
+<tr><td><strong>Skills 使用与新增情况</strong></td>
+<td><strong>新增运行时 Skill：1 个</strong> —— <code>velapaw-feeding-digest</code>（<code>agent/skills/velapaw-feeding-digest.md</code> → 板上 <code>/data/ai_agent/skills/</code>），满足本赛道"≥1 个自定义 Skill"的硬性要求，定义与触发场景见 3.4.5。设备上另有框架自带的 <strong>10 个内置 Skill</strong>，系统提示中的 Skills 摘要为 <strong>916 B</strong>。<br>
+<strong>开发侧 Skill：</strong>使用了组委会经 <code>.claude</code> manifest 预装的 Skill 集合，其中在本项目中实际发挥作用的包括 <code>contest-log-collector</code>（AI Coding 日志归集）、<code>kconfig-tweak</code>（免 menuconfig 改 <code>.config</code>）、<code>openvela-build</code>（构建流程）、<code>submit-pr</code>（提交流程），以及通用的 <code>artifact-design</code>。<code>Skill</code> 工具在归集日志中共触发 <strong>17 次</strong>。<br>
+<strong>另建持久化记忆库 40+ 条</strong>，用于跨会话保存"哪些做法已被真机证伪"的结论（例如"CONFIG_RTC 会杀死 USB 控制台"、"<code>0x818000</code> 会锁死 SoC"、"重复 wapi 挂控制台一说已撤回"），显著降低了长周期项目中重复踩坑的成本。</td></tr>
+
+<tr><td><strong>Token 使用总量</strong></td>
+<td>统计自本机 35 074 条带 usage 记录的助手消息：<br>
+　输入 token：<strong>340 649</strong><br>
+　输出 token：<strong>44 262 781</strong><br>
+　缓存写入 token：<strong>181 608 127</strong><br>
+　缓存读取 token：<strong>6 725 913 276</strong><br>
+　<strong>合计：6 952 124 833（约 69.5 亿）</strong><br>
+其中不含缓存读取的部分为 <strong>226 211 557（约 2.26 亿）</strong>。缓存读取占 96.7%，是长上下文硬件调试项目的典型形态——每一轮"改配置 → 编译 → 烧录 → 读控制台"都要携带完整的板级上下文重新推理。</td></tr>
+</table>
+
+<p><strong>AI 在本项目中承担的角色（按贡献排序）：</strong></p>
+<ol>
+<li><strong>把"看起来是软件 bug"的问题重新定义为可测量的物理问题。</strong>硬件 SPI 那 60 轮失败的编译都是在软件里找原因；转折点是决定"镜像 SPI 引脚到排针 + 先做地面真值测试 + 用逻辑分析仪解码"。这个方案的设计与逐步排障是人机协作的产物，而结论——<em>外设是清白的，问题在面板的位同步</em>——只有靠观测才能得到。</li>
+<li><strong>在大量相似症状中做判别式区分。</strong>例如"整帧色相是决定性判据：翻转/Bayer 相位错误绝不可能丢掉绿色，所以紫色必然是 <code>0x4514</code> 而非翻转位"，把一个原本要盲试几十个寄存器的问题一次定位。</li>
+<li><strong>建立并执行验伪判据。</strong>本项目多条早期"结论"最终被推翻并在记忆库中显式标注为撤回（如"重复 wapi 会挂控制台"实为测试脚手架假象、"陈旧历史抑制工具调用"由一次受混淆的 A/B 得出、"死 TX ⇒ 死时钟"在寄存器层面被证伪）。<strong>把被推翻的结论记录下来，与记录正确结论同等重要</strong>。</li>
+<li><strong>跨越软硬件边界的排障。</strong>ES8311 的 RX TDM slot map 缺失、IOB 池与请求体的比值、PSRAM 栈与 Flash cache 的互斥——这些都不在单一层次内，需要同时握住内核配置、驱动寄存器与应用行为。</li>
+</ol>
+
+<h3>3.7 总结与展望</h3>
+
+<h4>3.7.1 成果总结</h4>
+
+<p>VelaPaw 在一颗 ESP32-S3 上、在 openVela 之上，完整实现并<strong>在真机上验证</strong>了一台多宠智能喂食器的全部核心能力：</p>
+<ul>
+<li><strong>端侧个体识别 + 双条件门控投喂</strong>——开集度量学习，新增宠物无需重训；识别与排程同时成立才投料。</li>
+<li><strong>端侧健康监测</strong>——体况三分类、30 天摄入趋势、食欲骤降告警。</li>
+<li><strong>免触摸语音排程</strong>——端侧 KWS 驱动的三步对话，真机端到端验证。</li>
+<li><strong>端侧 AI Agent</strong>——<code>ai_agent</code> 框架真机运行，1 个自定义 Skill，<code>ask</code> 被动问答 + 心跳主动推送，<strong>已捕获无人值守自动触发</strong>。</li>
+<li><strong>全新硬件平台适配</strong>——从零完成 ST7796 显示（40 MHz HW SPI + GDMA）、OV5640（LCD_CAM + GDMA）、PCF85063 RTC、28BYJ-48 步进四类驱动，并向驱动层回馈了 ES8311 RX slot map 的真实缺陷修复。</li>
+<li><strong>可制造的机械设计</strong>——参数化 OpenSCAD 投料器 + STL + BOM，逐格定量使"按只定量"在机械层面成立。</li>
+<li><strong>对 openVela 框架的回馈</strong>——3 个补丁 / 18 个文件 / +570 −190 行，另有 ESP-NN 集成以 fork+PR 形式提交。</li>
+</ul>
+
+<p>关键量化成果：推理 <strong>6.75 s → 1.31 s（5×）</strong>；UI 重绘 <strong>246 ms → 61 ms（4×）</strong>；Agent 响应 <strong>150–300 s → 3.6–35.6 s</strong>，可靠性 <strong>8/8</strong>。</p>
+
+<h4>3.7.2 应用前景与商业价值</h4>
+
+<p><strong>市场信号。</strong>2026 年 3 月，小米发布米家智能宠物喂食器 2 视觉版（众筹 ¥449 / 零售 ¥549）——一款专门为把摄像头引入喂食场景而生的量产产品。这等于是最了解宠物主人付费意愿的公司，用真金白银独立验证了 VelaPaw 立项时的核心判断：<strong>摄像头理应长在喂食器上</strong>。VelaPaw 在同一判断上更进一步：从"看到食盆"到<strong>"认出是哪一只"</strong>，且全部端侧完成。</p>
+
+<p><strong>目标受众（按付费意愿排序）：</strong></p>
+<ol>
+<li><strong>多宠家庭（核心）</strong>——痛点最尖锐：定量管理在多宠环境下完全失效。这是唯一"没有个体识别就无法解决"的人群。</li>
+<li><strong>处方饮食 / 减重管理的宠物主人</strong>——兽医给出的克数方案需要被真实执行并留下记录；VelaPaw 的每日上限 + 逐只历史正是这份"执行凭证"。</li>
+<li><strong>隐私敏感人群</strong>——不愿家中摄像头画面进入任何云端账号。VelaPaw 的"图像永不出设备"是硬承诺而非隐私政策条款。</li>
+<li><strong>老年宠物看护者</strong>——食欲骤降是许多疾病的最早信号；主动推送把"需要主人天天记录"变成"设备发现异常才开口"。</li>
+</ol>
+
+<p><strong>商业模式。</strong>核心是<strong>一次性硬件销售，零订阅</strong>——这是端侧 AI 直接带来的结构性优势：没有云推理成本，就不需要靠订阅费摊薄。</p>
+<table>
+<tr><th style="width:22%">收入来源</th><th>说明</th></tr>
+<tr><td>整机销售（主）</td><td>对标视觉款喂食器 ¥449–549 价位带。BOM 主体为 ESP32-S3 模组 + 3.5″ 触摸屏 + OV5640 + 步进 + 注塑件，规模化后成本结构与现有视觉款接近，而<strong>省掉了云端推理与存储的长期成本</strong>。</td></tr>
+<tr><td>耗材与配件</td><td>可洗料仓 / 不同容积转子（改一个 <code>WIDTH</code> 参数即改变每格克数）/ 备用食盆。</td></tr>
+<tr><td>可选云增值（不绑定）</td><td>Agent 层的健康简报可做成可选订阅（长期趋势报告、兽医可读的导出）。<strong>关闭订阅后设备全部核心功能不受影响</strong>——这与"停订阅就变砖"的竞品形成明确差异。</td></tr>
+<tr><td>B 端延伸</td><td>宠物医院 / 寄养机构的多笼位定量投喂与进食记录，本质是同一套"识别 + 定量 + 留痕"能力。</td></tr>
+</table>
+
+<p><strong>差异化壁垒：</strong>（1）个体识别而非"看得见"；（2）无 App、无账号、无云——安装即用；（3）断网全功能；（4）逐格定量的机械保证；（5）主动健康监护而非被动查看。</p>
+
+<h4>3.7.3 不足与未来工作</h4>
+
+<p>以下按<strong>诚实优先</strong>列出，包括本报告刻意<em>未</em>给出数字的项：</p>
+
+<table>
+<tr><th style="width:28%">不足</th><th>现状与计划</th></tr>
+<tr><td><strong>现场识别准确率未量化</strong></td><td>现有 3 只宠物的嵌入是在<strong>存在紫色偏色</strong>的固件版本下采集的；<code>0x4514</code> 修复后需<strong>全部重新登记</strong>，此前的现场数据不具备可比性。计划：重新登记后，在最终相机姿态下做为期 2 周的逐次匹配记录，给出误报率 / 漏报率与阈值 ROC。</td></tr>
+<tr><td><strong>长时老化测试未做</strong></td><td>最长受控观测为 600 s 无人值守区间。计划：24 h 与 7 d 连续运行，记录心跳触发成功率、TLS 重连次数、littlefs 写入次数与磨损、以及是否出现缓慢的资源泄漏。</td></tr>
+<tr><td><strong>功耗未测量</strong></td><td>尚无功率分析仪逐工况数据。计划：分别测量待机（屏幕常亮 / 息屏）、单次推理、投料三种工况的平均与峰值电流。</td></tr>
+<tr><td><strong>运行时堆余量不可观测</strong></td><td>因堆遍历接口会挂死本板，当前状态上报为假定值。计划：实现一个不持锁的轻量堆统计（或按区间采样），使内存波动成为可量化指标——这同时也是给 openVela 的改进建议 #2。</td></tr>
+<tr><td><strong>ESP-NN 未内置于队伍仓</strong></td><td>按规则以 fork+PR 提交，因此本仓开箱跑的是参考算子（6.75 s）。计划：完成 PR 合入后在 README 中给出 PR 链接，并提供一键套用脚本。</td></tr>
+<tr><td><strong>非宠物物体的拒识较弱</strong></td><td>开集度量学习的结构性特征。计划：加入一个极轻量的"是否为宠物面部"前置门（二分类），在进入嵌入匹配前先过滤，预期能显著压低误投。</td></tr>
+<tr><td><strong>无常驻语音唤醒</strong></td><td>当前语音排程需先点击开始。计划：若加入常驻唤醒，将<strong>严格采用大赛统一唤醒词</strong>（<em>你好，openvela</em> / <em>Hello，openvela</em>）。</td></tr>
+<tr><td><strong>Skill 运行时目录与规范不一致</strong></td><td>实现使用 <code>/data/ai_agent/skills/</code>（框架实际扫描目录），规范为 <code>/data/agent/skills/</code>。计划：待框架统一后一次性对齐挂载点。</td></tr>
+<tr><td>Agent 只有控制台通道</td><td>当前 <code>ask</code> 走 NSH 控制台。计划：把 Agent 的问答与推送接到触摸屏上的一个"健康"页，让主人无需串口即可看到简报。</td></tr>
+</table>
+
+<hr>
+
+<p style="text-align:center; font-size:10pt; color:#555; margin-top:20pt;">
+CircuitForge 队 · VelaPaw · 2026 首届 openVela AI 硬件开发者大赛<br>
+仓库：<code>github.com/open-vela/contest2026_043_CircuitForge</code>（分支 <code>dev-ai-contest-2026</code>） · 许可：Apache 2.0
+</p>

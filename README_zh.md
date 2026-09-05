@@ -10,16 +10,12 @@
 
 ## 演示视频
 
-<!-- TODO: 在 github.com 上直接编辑本文件，把 VelaPaw_Demo.mp4 拖拽进编辑框上传——GitHub 会自动生成一个 CDN 链接，粘贴在此处即可原生内嵌播放。 -->
-
-
-
 https://github.com/user-attachments/assets/41dbdc26-3da1-4739-bab1-6db7f95bbd13
 
 
 
 
-▶ 如果上方的嵌入视频无法加载，可以[直接下载](VelaPaw_Demo.mp4)（58MB，MP4）。建议您下载视频以获得更好的画质。
+▶ 如果上方的嵌入视频无法加载，可以[直接下载](VelaPaw_Demo.mp4)（93MB，MP4）。建议您下载视频以获得更好的画质。
 
 ---
 
@@ -90,7 +86,29 @@ https://github.com/user-attachments/assets/41dbdc26-3da1-4739-bab1-6db7f95bbd13
 
 ---
 
-## 四、硬件
+## 四、端侧 AI Agent（唯一需要联网的部分）
+
+openVela **`ai_agent`** 框架运行在同一颗 ESP32-S3 上，作为叠加在已完成的喂食器**之上**的一层。它让 VelaPaw 多了一种有用的方式：不必主人走到屏幕前查看，设备会自己读取喂食记录，在情况不对时主动开口。
+
+**设备上实际运行的内容**
+
+| | |
+|---|---|
+| **自定义 Skill** | 位于 `/data/ai_agent/skills/` 的喂食简报 Skill —— 读取 VelaPaw 每次投喂时写入闪存的喂食记录，生成逐只宠物的摘要：克数、餐次，以及相对该宠物自身基线的食欲变化。 |
+| **CLI 提问** | `ask how much did bob eat today` —— Agent 从设备闪存中读取实时记录并据此作答，而不是返回预设的固定回复。 |
+| **主动推送** | 心跳任务按固定间隔重新读取记录，**仅在某只宠物越过预警阈值时**才推送提醒 —— 设备不出声，就说明一切正常。它无人值守自动触发，无需有人守在控制台前。（演示固件使用 3 分钟的短间隔，以便在一次演示中就能看到推送触发；量产产品会采用小时级间隔。） |
+
+**离线与联网 —— 边界在哪里**
+
+> **喂食器本体从不需要联网。** 识别、投喂时间表、份量与每日上限控制、体况评估、进食历史与趋势、语音对话以及整个界面，全部在 ESP32-S3 端侧运行，不依赖任何网络。拔掉网络，VelaPaw 照常识别宠物并按时投喂，与之前完全一样。
+>
+> **Agent 层是唯一需要联网的部分**，因为它要通过设备的 USB 网络接口（CDC-NCM）访问云端大模型。断网时，`ask` 与主动推送会停止 —— 而其他一切都不会。任何投喂决策都不会在云端做出，也没有任何图像离开设备。
+
+完整说明 —— 架构、Skill、框架补丁，以及已捕获的主动推送记录：**[docs/AI_AGENT_zh.md](docs/AI_AGENT_zh.md)**（[English](docs/AI_AGENT.md)）。设备端源码与补丁位于 [`agent/`](agent/)。
+
+---
+
+## 五、硬件
 
 - **Waveshare ESP32-S3-Touch-LCD-3.5-C** —— ESP32-S3，8 MB PSRAM，16 MB 闪存，320×480 ST7796 触摸屏，OV5640 摄像头，PCF85063 RTC。
 
@@ -101,10 +119,12 @@ https://github.com/user-attachments/assets/41dbdc26-3da1-4739-bab1-6db7f95bbd13
 
 ---
 
-## 五、目录结构
+## 六、目录结构
 
 ```
 app/velapaw/     — 设备端应用（由 manifest 通过 linkfile 映射到 packages/demos/）
+agent/           — ai_agent 层：自定义 Skill、心跳任务，以及针对
+                   packages/ai_agent 的补丁（详见 agent/README.md）
 board/           — 板文件：显示/摄像头/RTC/步进电机（esp32s3_st7789.c）、
                    开机自启（esp32s3_appinit.c）以及板级 defconfig
 host/            — 设备外的模型训练与导出（TensorFlow/Keras）
@@ -115,7 +135,7 @@ logs/            — AI Coding 会话日志（本项目借助 AI 辅助开发完
 
 ---
 
-## 六、编译与运行（真机）
+## 七、编译与运行（真机）
 
 ```bash
 # 1. 拉取 openVela 与本队仓库
@@ -127,6 +147,7 @@ repo sync -c -j8
 BOARD=nuttx/boards/xtensa/esp32s3/esp32s3-devkit
 cp contest2026_043_CircuitForge/board/esp32s3_st7789.c   $BOARD/src/
 cp contest2026_043_CircuitForge/board/esp32s3_appinit.c  $BOARD/src/
+cp contest2026_043_CircuitForge/board/esp32s3_bringup.c  $BOARD/src/
 cp contest2026_043_CircuitForge/board/configs/waveshare_lcd/defconfig \
    $BOARD/configs/waveshare_lcd/defconfig
 
@@ -146,7 +167,7 @@ esptool --chip esp32s3 --port <串口> write-flash \
 
 ---
 
-## 七、AI 辅助开发说明
+## 八、AI 辅助开发说明
 
 本项目全程采用 AI 辅助（AI Coding）开发，完整会话日志已按要求提交于 [`logs/`](logs/)。AI 贯穿了整个开发生命周期：
 
@@ -157,13 +178,15 @@ esptool --chip esp32s3 --port <串口> write-flash \
 
 ---
 
-## 八、进展状态
+## 九、进展状态
+
+**端侧 `ai_agent`：** 已在真机上运行 —— 自定义喂食简报 Skill、`ask` CLI 交互渠道，以及已捕获到无人值守自动触发的主动推送。它是 VelaPaw 中唯一需要联网的部分；喂食器本体在断网时照常工作。详见上文第四节。
 
 **目前已在真机上运行：** 端侧识别、体况评估、带单餐跳过开关的识别门控每日三餐排程、份量与每日上限控制、带食欲骤降告警的进食历史与趋势、硬件 RTC、带持久化头像的完整宠物生命周期、开机自启、硬件 SPI + DMA 显示、中英双语界面（可实时切换）、已在真机上端到端验证的 MEAL→HOUR→CONFIRM 语音投喂排程对话、**28BYJ-48 步进电机投料机构**（GPIO9/10/11/43 驱动）、**引到 30 cm 排线上的 OV5640**（已通过转接板 + `cam_mast` 支架确认工作正常），以及**外壳 3D 打印件的最终机械装配**——步进电机投料机构与摄像头均已装入打印结构。
 
 ---
 
-## 九、数据集
+## 十、数据集
 
 本项目使用的数据集可在此获取：https://drive.google.com/drive/folders/1-HnbS-VStbKuXCXWK-O1Nh2lNLdqMpbI
 

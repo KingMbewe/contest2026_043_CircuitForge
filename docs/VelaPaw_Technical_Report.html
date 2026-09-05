@@ -1,0 +1,699 @@
+<meta charset="utf-8">
+<title>VelaPaw Technical Report</title>
+<style>
+  body { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; font-size: 11pt; line-height: 1.6; color:#1a1a1a; }
+  h1 { font-size: 22pt; text-align:center; margin-bottom: 4pt; }
+  h2 { font-size: 16pt; border-bottom: 1.5pt solid #2b5b84; padding-bottom: 3pt; margin-top: 22pt; color:#1d4568; }
+  h3 { font-size: 13pt; margin-top: 16pt; color:#1d4568; }
+  h4 { font-size: 11.5pt; margin-top: 12pt; color:#333; }
+  table { border-collapse: collapse; width: 100%; margin: 8pt 0 12pt 0; font-size: 10pt; }
+  th, td { border: 0.75pt solid #9aa7b1; padding: 5pt 7pt; vertical-align: top; text-align: left; }
+  th { background: #e8eef4; font-weight: bold; }
+  pre { font-family: Consolas, "Courier New", monospace; font-size: 9pt; background:#f5f6f8;
+        border: 0.75pt solid #ccd3d9; padding: 8pt; white-space: pre; line-height:1.35; }
+  code { font-family: Consolas, "Courier New", monospace; font-size: 9.5pt; }
+  .cover { text-align:center; margin: 24pt 0 30pt 0; font-size: 12pt; line-height: 2.0; }
+  .note { background:#fbf7e8; border-left: 3pt solid #c8a44a; padding: 6pt 10pt; margin: 8pt 0; font-size: 10pt; }
+  .caption { font-size: 9.5pt; color:#555; margin-top:-6pt; }
+</style>
+
+<h1>VelaPaw — On-Device AI Multi-Pet Smart Feeder</h1>
+<p style="text-align:center; font-size:13pt; margin-top:0;">Technical Report</p>
+
+<div class="cover">
+<strong>2026 Inaugural openVela AI Hardware Developer Contest</strong><br>
+Track: AI Hardware Product Innovation<br>
+Team: CircuitForge (<code>contest2026_043</code>)<br>
+Project: VelaPaw<br>
+Repository: <code>contest2026_043_CircuitForge</code> (branch <code>dev-ai-contest-2026</code>)<br>
+Hardware: openVela (NuttX) / Waveshare ESP32-S3-Touch-LCD-3.5-C<br>
+Date: 2026-09-06
+</div>
+
+<div class="note">This is the English edition of the submission technical report. A Chinese edition with identical content is provided as <code>VelaPaw_技术报告.pdf</code> / <code>.docx</code>. Where the two differ in wording, the Chinese edition is the submitted version of record.</div>
+
+<hr>
+
+<h2>1. Deliverables</h2>
+
+<table>
+<tr><th style="width:16%">Item</th><th style="width:10%">Required</th><th style="width:30%">File</th><th>Notes</th></tr>
+<tr>
+  <td><strong>Work introduction document</strong><br>(this technical report)</td><td>Required</td>
+  <td><code>VelaPaw_技术报告.pdf</code> / <code>.docx</code><br><code>VelaPaw_Technical_Report.pdf</code> / <code>.docx</code></td>
+  <td>This document. It <strong>is</strong> the work introduction document required by the submission rules — the organiser's official template, filled in, with no format of our own invented. Supplied as PDF and DOCX, in Chinese and English.</td>
+</tr>
+<tr>
+  <td><strong>Demo video</strong></td><td>Required</td>
+  <td><code>VelaPaw_Demo.mp4</code></td>
+  <td><strong>4 min 58 s</strong> (≤5 min); 1920×1080 / 30 fps, H.264 High + AAC 48 kHz stereo, 93.3 MB, with <strong>burnt-in EN/中文 subtitles</strong>. Shot entirely on real hardware: touchscreen interaction, recognition-gated dispensing, stepper feeding, voice scheduling, and a live console capture of <code>ai_agent</code> answering <code>ask</code> and pushing proactively (the closing console segment is deliberately left unsubtitled so the subtitles do not cover the log text being shown). The video is also embedded in the repository README.</td>
+</tr>
+<tr>
+  <td>Product photos</td><td>Optional</td>
+  <td><code>hardware/preview/</code></td>
+  <td>Renders and photos of the 3D-printed dispenser and full assembly.</td>
+</tr>
+<tr>
+  <td>Supplementary product introduction</td><td>In the repository<br>(not in the archive)</td>
+  <td><code>VelaPaw_Project_Intro.pdf</code><br><code>VelaPaw_Project_Intro_zh.pdf</code></td>
+  <td>An earlier non-technical product introduction (bilingual) with market and value analysis, kept in the repository for reference. It is <strong>not</strong> part of the submission archive — the template document above is the work introduction document.</td>
+</tr>
+<tr>
+  <td>Poster / defence deck</td><td>Optional</td>
+  <td>—</td>
+  <td>Not submitted.</td>
+</tr>
+<tr>
+  <td>AI-coding logs</td><td>Required</td>
+  <td><code>logs/KingMbewe/</code></td>
+  <td>Collected automatically by the organiser-provided <code>contest-log-collector</code>; <strong>never hand-edited</strong>. 17 JSONL files, 78.7 MB, 55,255 events.</td>
+</tr>
+</table>
+
+<p>Submission archive: <code>CircuitForge-VelaPaw-contest2026_043_CircuitForge.zip</code> (&lt;team&gt;-&lt;work&gt;-&lt;repository&gt;), containing exactly the two required items — <strong>the work introduction document</strong> (this report, PDF + DOCX, Chinese and English) and <strong>the demo video</strong> (<code>VelaPaw_Demo.mp4</code>, 4 min 58 s). The repository address is stated on the cover page and in §2.</p>
+
+<h2>2. Project Facts</h2>
+
+<table>
+<tr><th style="width:22%">Item</th><th>Detail</th></tr>
+<tr><td>Project</td><td>VelaPaw — on-device AI multi-pet smart feeder</td></tr>
+<tr><td>Track</td><td>AI Hardware Product Innovation</td></tr>
+<tr><td>Team / ID</td><td>CircuitForge / <code>contest2026_043</code></td></tr>
+<tr><td>Hardware</td><td>Waveshare ESP32-S3-Touch-LCD-3.5-C (ESP32-S3, dual-core Xtensa LX7, 8 MB PSRAM, 16 MB flash, 320×480 ST7796 capacitive touch panel, OV5640 camera, PCF85063 RTC, ES8311 audio codec) plus a self-designed 3D-printed paddle-rotor dispenser (28BYJ-48 stepper / ULN2003)</td></tr>
+<tr><td>OS</td><td>openVela (NuttX), board config <code>esp32s3-devkit:waveshare_lcd</code></td></tr>
+<tr><td>openVela capability areas used</td><td><strong>Graphics</strong> (LVGL), <strong>AI</strong> (<code>apps/mlearning/tflite-micro</code> + the <code>ai_agent</code> framework), <strong>Multimedia</strong> (NuttX Audio / I²S / ES8311 + the <code>apps/video</code> camera stack) — <strong>all three</strong></td></tr>
+<tr><td>Wake word</td><td><strong>The product has no always-on voice wake feature.</strong> Voice scheduling is started by tapping a button on the "edit pet" page and then answering prompts; it is a button-triggered constrained-vocabulary keyword spotter, not an always-listening wake word. The contest rule mandating <em>你好，openvela</em> / <em>Hello，openvela</em> therefore does not apply. Should always-on wake be added later, that exact wake word will be used.</td></tr>
+<tr><td>Licence</td><td>Apache License 2.0</td></tr>
+<tr><td>Code hosting</td><td>GitHub — <code>github.com/open-vela/contest2026_043_CircuitForge</code>, branch <code>dev-ai-contest-2026</code></td></tr>
+</table>
+
+<h2>3. Technical Report</h2>
+
+<h3>3.1 Introduction</h3>
+
+<h4>3.1.1 Background and problem statement</h4>
+
+<p>In a multi-pet household, an ordinary timed feeder has a structural flaw: <strong>it does not know which animal is standing at the bowl</strong>. The lid opens on schedule, whoever arrives first eats everything, and the slower one goes hungry. Per-pet portions, per-pet weight control, per-pet appetite monitoring — none of it is possible. And per-pet portioning is precisely the first thing a vet asks for when prescribing a weight-loss, disease-management, or post-operative plan.</p>
+
+<p>Existing camera-equipped feeders — for instance the Xiaomi Mijia Smart Pet Feeder 2 Vision Edition, launched March 2026 at ¥449 crowdfunded / ¥549 retail — solve the problem of letting the owner <em>see</em> the bowl; what the camera produces is a video stream. They do not solve <em>identifying</em> which animal it is. Such products also bind the camera feed to a cloud account, which is the single largest source of hesitation pet owners have about a household camera.</p>
+
+<p>VelaPaw therefore defines its problem as:</p>
+<blockquote>
+On an MCU-class device, with <strong>no network, no cloud, and no phone app</strong>, use a single camera to tell which pet is at the bowl, and dispense only the meal <em>that</em> pet is due <em>right now</em>; then keep a long-term record of each pet's intake and proactively tell the owner when appetite goes wrong.
+</blockquote>
+
+<p>That last "proactively tell the owner" layer is carried by openVela's <code>ai_agent</code> framework and is the <strong>only</strong> part of the system that needs a network. The feeder itself behaves identically offline.</p>
+
+<h4>3.1.2 Technical challenges</h4>
+
+<table>
+<tr><th style="width:24%">Challenge</th><th>What it looked like</th></tr>
+<tr><td><strong>① Compute for fine-grained on-device recognition</strong></td>
+<td>Individual pet ID is a fine-grained recognition problem requiring a MobileNet-class backbone plus a metric-learning head. Running that model on Xtensa LX7 through TFLite-Micro's <em>reference</em> kernels takes <strong>≈6.75 s per inference</strong> — unusable. An early TFLM spike (<code>docs/TFLM_SPIKE_REPORT.md</code>, run in QEMU, not on S3) profiled a comparable INT8 CNN and found <strong>CONV_2D accounts for 84% of the clock</strong> (643,819 of 768,105 ticks): latency is almost entirely decided by the INT8 convolution kernels. Yet the openVela tree ships only <code>cmsis-nn</code> (ARM) and <code>nnlib-hifi4</code> (HiFi DSP) — <strong>there is no operator library for LX7</strong>.</td></tr>
+<tr><td><strong>② Adding a pet must not require retraining</strong></td>
+<td>No consumer product can ask a user to retrain a model to add a cat. N-way classification had to be abandoned in favour of open-set metric learning, with a threshold that holds up under real household lighting.</td></tr>
+<tr><td><strong>③ The model does not fit the MCU's memory map</strong></td>
+<td>A 1.44 MB identity model cannot be memory-mapped as a <code>const</code> array — the ESP32-S3 DROM0 MMU window saturates well before that. It must be read from raw flash into PSRAM; but <strong>a flash read suspends the CPU cache, and PSRAM is reached <em>through</em> that cache</strong>, so if the loading thread's stack lives in PSRAM the whole SoC deadlocks.</td></tr>
+<tr><td><strong>④ The hardware-SPI display "renders nothing"</strong></td>
+<td>Full-screen writes worked; any <strong>partial window</strong> (a <code>CASET</code>/<code>RASET</code> sub-rectangle followed by <code>RAMWR</code>) never appeared — while the identical byte sequence over bit-banged GPIO worked perfectly. This survived <strong>roughly 60 rounds of blind rebuilds</strong>.</td></tr>
+<tr><td><strong>⑤ ai_agent's request body vs. the network buffer</strong></td>
+<td><code>ai_agent</code> registers 36 tools by default, whose JSON schemas push a single LLM request body to <strong>19,391 B</strong>, of which <strong>9,946 B is tool schema</strong>. NuttX's IOB pool is only <code>NBUFFERS(64) × BUFSIZE(196) = 12,544 B</code>, leaving roughly <strong>7,840 B</strong> usable after <code>THROTTLE(24)</code>. The request is far larger than the available buffer; the symptom is an intermittent hang with no timeout.</td></tr>
+<tr><td><strong>⑥ Agent answers that <em>look</em> right but are fabricated</strong></td>
+<td>The heartbeat replayed its own history; <code>list_dir</code>'s prefix match plus a local-tool shortcut handed <code>(no files found)</code> straight to the user as a final answer; <code>ask</code> was truncated at the seventh word by <code>MAX_ARGS</code>. None of these raise an error — they simply make the answer fluent and wrong.</td></tr>
+</table>
+
+<h4>3.1.3 Innovations</h4>
+
+<ol>
+<li><strong>Dual-condition "recognition × schedule" gating.</strong> Food is dispensed only when "this is that pet" <em>and</em> "one of its meals is due today and has not been fed" are both true — at most once per meal per day, with any meal individually skippable. Recognition alone would feed the greedy one all day; a timer alone would feed whoever happened to walk past. This AND gate is the core product logic and the precondition for per-pet portioning to mean anything.</li>
+<li><strong>Open-set metric learning instead of a classifier.</strong> The model is only a generic pet feature extractor, mapping a 128×128 frame to an L2-normalised 128-dimensional embedding. Enrolment = store the mean embedding of a few photos; recognition = cosine similarity. <strong>Adding a pet is a pure runtime operation — no retraining, no firmware update.</strong></li>
+<li><strong>A bug that survived 60 rebuilds turned into a 4× speedup.</strong> A logic analyser disproved the "software problem" hypothesis and reframed it as a panel bit-synchronisation problem (§3.4.3). With that fixed, the display moved from bit-banging to 40 MHz hardware SPI + GDMA: full-screen repaint <strong>246 ms → 61 ms</strong>.</li>
+<li><strong>ai_agent as a silent health monitor, not a chatbot.</strong> A heartbeat task periodically reads the records the feeder itself wrote to flash and <strong>speaks only when a threshold is crossed</strong>. When everything is fine, the device says nothing. The custom Skill states explicitly that only numbers from those files may be used, and nothing may be invented.</li>
+<li><strong>A clear "offline-first, network-optional" boundary.</strong> Every feeding decision and all image processing happen on-device; <strong>no image ever leaves the device</strong>. Unplug the network and the feeder behaves identically — only the Agent layer stops. This is both a privacy claim and a reliability claim.</li>
+<li><strong>Pocket-by-pocket mechanical dosing.</strong> A continuously rotating paddle rotor replaces a flap: a flap's dose drifts with hopper level, whereas each rotor pocket has fixed volume, so <code>grams = pockets × grams-per-pocket</code> — making per-pet portioning true at the mechanical level too.</li>
+</ol>
+
+<h3>3.2 System Design</h3>
+
+<h4>3.2.1 Overall architecture</h4>
+
+<pre>
+┌──────────────────────────── ESP32-S3 (openVela / NuttX) ────────────────────────────┐
+│                                                                                      │
+│  ┌── Application app/velapaw/ ────────────────┐   ┌── ai_agent (the only ────┐       │
+│  │  ui/       LVGL 4-tab touch UI             │   │      networked layer)    │       │
+│  │            Enroll · Recognize · Pets ·     │   │  agent_loop  tool sched. │       │
+│  │            Trends                          │   │  16 builtin tools 4,706 B│       │
+│  │  infer/    inference API + TFLM backend    │◄──┤  Skills engine (10 built- │      │
+│  │  identity/ enrolment · cosine · flash       │   │     in + 1 custom)       │       │
+│  │  store/    history · trends · appetite     │   │  heartbeat (proactive)   │       │
+│  │  voice/    KWS + MEAL→HOUR→CONFIRM dialog  │   │  session persistence     │       │
+│  │  hal/      camera / feeder abstraction     │   └──────────┬───────────────┘       │
+│  └───────┬────────────────────────────────────┘              │ reads Markdown        │
+│          │                                                   │ /data/ai_agent/       │
+│  ┌───────▼──── openVela subsystems ────────────────────────────▼─────────────────┐   │
+│  │ LVGL │ tflite-micro (+ESP-NN) │ Audio/I²S/ES8311 │ video/OV5640 │             │   │
+│  │ littlefs (/data @0x180000) │ USB composite CDC-ACM + CDC-NCM │ mbedTLS TLS1.2 │   │
+│  └───────┬─────────────────────────────────────────────────────────┬────────────┘   │
+│          │ board/ — drivers written from scratch                    │ CDC-NCM        │
+│  ┌───────▼───────────────────────────────────────────────────┐     │ 192.168.137.2  │
+│  │ ST7796 (HW SPI2 40 MHz + GDMA) │ OV5640 (LCD_CAM + GDMA)  │     │                │
+│  │ PCF85063 RTC (raw I²C)         │ 28BYJ-48 (ULN2003, 4 GPIO)│    │                │
+│  └───────────────────────────────────────────────────────────┘     │                │
+└────────────────────────────────────────────────────────────────────┼────────────────┘
+                                                                     ▼
+                                                      DeepSeek API (api.deepseek.com:443)
+</pre>
+<p class="caption">Figure 3-1 — VelaPaw system block diagram</p>
+
+<h4>3.2.2 Design decisions and rationale</h4>
+
+<table>
+<tr><th style="width:16%">Decision</th><th style="width:24%">Chosen</th><th>Rationale / rejected alternative</th></tr>
+<tr><td>Recognition paradigm</td><td>Open-set metric learning (cosine match)</td><td><strong>Rejected N-way classification</strong>: every new pet would require retraining and an OTA — unacceptable in a consumer product. Metric learning reduces "add a pet" to writing one flash record. The cost is inherently weaker rejection of non-pet objects, so the lever is placed on enrolment quality (close, well-lit, front-facing) rather than on the threshold.</td></tr>
+<tr><td>Inference runtime</td><td>TFLite-Micro + ESP-NN</td><td>An early spike using the in-tree <code>tflm_benchmark</code> in a simulator confirmed <strong>integration works, all operators are covered, and the tensor arena is only 84,420 B</strong> (negligible against 8 MB PSRAM), and located the bottleneck in CONV_2D (84%). That determined the project would not be viable without LX7 SIMD kernels (ESP-NN).</td></tr>
+<tr><td>Model storage</td><td>Raw flash partition, read into PSRAM at boot</td><td><strong>Rejected memory-mapped <code>const</code> arrays</strong>: 1.44 MB far exceeds the DROM0 MMU window. Uses <code>spi_flash_read</code> instead; because a flash read suspends the cache, the reading thread's stack must live in internal SRAM (<code>.bss</code>), not PSRAM.</td></tr>
+<tr><td>Dispenser mechanism</td><td>28BYJ-48 stepper + paddle rotor</td><td><strong>Rejected an MG90S servo + flap</strong>: a servo can only oscillate, and with the inlet and outlet 180° apart a zero-net-rotation wobble can never carry a pocket across — it dispenses the initial charge and then spins uselessly. A flap's dose also drifts with hopper level, which would destroy the per-pet portioning claim outright. A stepper's continuous unidirectional rotation makes <code>grams = pockets × grams-per-pocket</code> strictly true, and its gearbox gives the low-speed torque needed to resist jamming.</td></tr>
+<tr><td>Carrier board</td><td>Waveshare ESP32-S3-Touch-LCD-3.5-C</td><td><strong>Same SoC</strong> as the official ESP32-S3-EYE, so the openVela port and all inference work carry over unchanged. But the product needs a <strong>capacitive touchscreen</strong> (enrolment, schedule editing, trends) and a <strong>hardware RTC</strong> (schedules stay correct across power loss) — the EYE has neither. Same platform, better carrier.</td></tr>
+<tr><td>On-board networking</td><td>USB CDC-NCM composite device</td><td><strong>Rejected RNDIS</strong>: Windows' <code>rndismp6.sys</code> hard-requires RNDIS on interface 0, which collides with the CDC-ACM console; the resulting Code-10 proved unavoidable. CDC-NCM makes the <strong>console (COM port) and the network interface (<code>eth0</code>) usable simultaneously over one USB cable</strong>. <strong>Rejected on-board Wi-Fi as the demo link</strong>: Wi-Fi works and remains in the configuration, but the USB composite link is far more reproducible in a demo setting.</td></tr>
+<tr><td>Agent data bridge</td><td>Feeder writes Markdown; Agent reads it with <code>read_file</code></td><td><strong>Rejected custom tools / IPC / shared memory.</strong> After each feed the VelaPaw C application writes plain Markdown to <code>/data/ai_agent/velapaw/{status,feed_log}.md</code>, and the Agent reads it with the <strong>framework's own <code>read_file</code></strong>. Zero new tools, zero new protocol, zero coupling: to the Agent it is an ordinary file; to the C application it is an <code>fprintf</code>.</td></tr>
+<tr><td>Agent persistence</td><td>littlefs at <code>0x180000</code> mounted as <code>/data</code></td><td><strong>Rejected tmpfs</strong>: the API key, session history, and Skill files would have to be re-provisioned on every reboot. The littlefs partition starts at <code>0x180000</code> while <code>write-flash 0x0 nuttx.bin</code> writes only up to about <code>0x17ec80</code>, so <strong><code>/data</code> survives both reboots and firmware reflashes</strong>.</td></tr>
+<tr><td>Cloud model</td><td>DeepSeek <code>deepseek-chat</code></td><td>OpenAI-compatible API with native function-calling support in the framework; directly reachable domestically, with controllable latency and cost.</td></tr>
+</table>
+
+<h4>3.2.3 Offline and degraded-network behaviour</h4>
+
+<p>This boundary is a deliberate design position, and it is what separates "AI hardware" from "connected hardware".</p>
+
+<table>
+<tr><th style="width:34%">Function</th><th style="width:14%">Offline</th><th>Notes</th></tr>
+<tr><td>Pet recognition (INT8 inference)</td><td>✅ Works</td><td>Model lives in flash/PSRAM; no network dependency whatsoever.</td></tr>
+<tr><td>Recognition-gated feeding, daily cap</td><td>✅ Works</td><td>Purely local state machine plus RTC.</td></tr>
+<tr><td>Body-condition scoring, history, trends</td><td>✅ Works</td><td>Second on-device model plus local littlefs history.</td></tr>
+<tr><td>Voice meal scheduling (KWS)</td><td>✅ Works</td><td>On-device keyword model; never touches the network.</td></tr>
+<tr><td>All touchscreen functions</td><td>✅ Works</td><td>Rendered locally by LVGL.</td></tr>
+<tr><td>Agent <code>ask</code> Q&amp;A</td><td>⛔ Stops</td><td>Requires the cloud LLM. On failure the console prints an explicit <code>[llm] API error</code> line; <strong>no fabricated answer is produced</strong>.</td></tr>
+<tr><td>Agent proactive push</td><td>⛔ Silent</td><td>The heartbeat still fires and still reads the local files; only the LLM call fails. <strong>Nothing is falsely reported and no data is lost</strong> — once connectivity returns, the next heartbeat reasons over the complete history.</td></tr>
+</table>
+
+<p><strong>Degraded networks</strong> are handled at three layers. (1) <em>Transport</em> — <code>vela_tls</code> keeps and reuses a connection pool to <code>api.deepseek.com:443</code> (visible as <code>[vela_tls] Reusing pooled connection</code>). When the server closes an idle keep-alive the result is a zero-byte response, which the framework recovers from in-band; measured 3/3 recoveries. <strong>This behaviour is not a defect.</strong> (2) <em>Timeouts</em> — tuned to real MCU round-trips: <code>AGENT_LLM_TIMEOUT_SEC</code> raised to <strong>420 s</strong> and the socket timeout to <strong>480 s</strong>; the previous 60 s default discarded a 62.6 s answer that had in fact succeeded. (3) <em>Request size</em> — the tool cut described in §3.3.3, which brings the body within what the IOB pool can carry, and is by far the most effective of the three on a weak link.</p>
+
+<h4>3.2.4 Key modules</h4>
+
+<table>
+<tr><th style="width:18%">Module</th><th style="width:26%">Location</th><th>Responsibility and key design</th></tr>
+<tr><td>UI</td><td><code>app/velapaw/ui/</code> (<code>ui_lvgl.c</code>, 4,104 lines)</td><td>Four LVGL pages (Enroll / Recognize / My Pets / Trends); bilingual string table with live switching; the Trends page carries a coloured intake bar chart, an appetite line chart, and a body-condition gauge. Language is RAM-only (writing <code>0x818000</code> wedges the SoC and that address is a permanent no-go).</td></tr>
+<tr><td>Inference</td><td><code>infer/</code> (<code>backend_tflm.cc</code>, 399 lines)</td><td>Two independent <code>MicroInterpreter</code>s (identity + body condition) with arenas in PSRAM. <strong>Inference runs on a dedicated worker thread</strong>, so the LVGL main loop hands off the frame and keeps rendering — touch and preview stay responsive through the 1.3 s inference. Recognition is <strong>on-demand</strong>, not continuous.</td></tr>
+<tr><td>Identity</td><td><code>identity/</code> (419 lines)</td><td>Enrolment store, cosine matcher (threshold 0.45), per-pet flash persistence (<code>0x800000</code>, magic <code>VPAW</code>), and pet avatars (<code>0x810000</code>, magic <code>VICN</code>).</td></tr>
+<tr><td>Store / analytics</td><td><code>store/</code> (<code>store_stub.c</code>, 625 lines)</td><td>30-day intake window, baseline and appetite percentage, daily cap, body-condition records; also generates the <code>status.md</code> / <code>feed_log.md</code> the Agent reads. <strong>Key fix</strong>: the day stamp originally advanced only when a demo button was pressed, so every feeding ever recorded piled into "today", intake was over-reported, and the feeder consequently <em>refused</em> to feed. Replaced with a VP02 fourth header word plus a clock-driven <code>vp_sync_day()</code>, with the rule that <strong>the day stamp never moves backwards</strong> (a build-date anchor makes every cold boot look like time travelling backwards).</td></tr>
+<tr><td>Voice</td><td><code>voice/</code> (<code>kws.cc</code> 822 + <code>mic.c</code> 2,370 lines)</td><td>A 14-label KWS model driving a constrained MEAL→HOUR→CONFIRM dialog. <strong>Constrained decoding operates on the raw softmax and never renormalises.</strong> Three gates at 0.40 / 0.55 / 0.55, plus a voting rule that rescues a dialog from three sub-threshold readings.</td></tr>
+<tr><td>HAL</td><td><code>hal/</code></td><td>Abstractions for the camera (four backends: OV5640 / V4L2 / net / mock) and the feeder (stepper / mock), so the same application code runs on hardware and in simulation.</td></tr>
+<tr><td>Agent layer</td><td><code>agent/</code></td><td>One custom Skill, one heartbeat task list, and three patches against <code>packages/ai_agent</code> (§3.4.5 and §3.3.3).</td></tr>
+</table>
+
+<h3>3.3 Core Algorithms and Principles</h3>
+
+<h4>3.3.1 On-device models</h4>
+
+<table>
+<tr><th style="width:20%">Item</th><th style="width:40%">Identity model</th><th>Body-condition model / KWS</th></tr>
+<tr><td>Task</td><td>Individual pet identification (open-set)</td><td>3-class body condition (thin / ideal / overweight); voice keyword spotting</td></tr>
+<tr><td>Architecture</td><td>MobileNetV3-Small backbone + <strong>TSFM</strong> spatial-attention module + ArcFace metric head</td><td>Compact 3-class CNN; 14-label KWS convnet</td></tr>
+<tr><td>Input / output</td><td>128×128 → L2-normalised <strong>128-D embedding</strong></td><td>BCS: 3 logits; KWS: 14-class softmax</td></tr>
+<tr><td>Framework</td><td colspan="2">Training: TensorFlow / Keras (<code>host/</code>). Inference: <strong>TensorFlow Lite for Microcontrollers</strong> (<code>apps/mlearning/tflite-micro</code>)</td></tr>
+<tr><td>Quantisation</td><td colspan="2"><strong>INT8 post-training quantisation</strong>; every operator is a TFLM built-in</td></tr>
+<tr><td>Model size</td><td>1.44 MB (flash <code>0x600000</code>)</td><td>626 KB (flash <code>0x760000</code>); the KWS model is embedded in firmware rodata</td></tr>
+<tr><td>Operator set</td><td colspan="2">ADD, CONV_2D, DEPTHWISE_CONV_2D, FULLY_CONNECTED, L2_NORMALIZATION, LOGISTIC, MEAN, MUL, PAD (9, all supported by the default resolver)</td></tr>
+<tr><td>Compute cost</td><td colspan="2">Inference <strong>≈1.3 s</strong> with ESP-NN SIMD kernels versus <strong>≈6.75 s</strong> with TFLM reference kernels — a <strong>≈5×</strong> speedup, measured on real hardware. Tensor arena and operator-level timing come from the earlier TFLM spike (QEMU, comparable INT8 CNN, <strong>not this model on S3</strong>): arena <strong>84,420 B</strong> (non-persistent 55,296 B + persistent 29,124 B), split CONV_2D ≈84% / DEPTHWISE_CONV_2D ≈16%. The magnitudes are enough to establish that the arena is not the constraint and the convolution kernels are — which is what set the optimisation direction.</td></tr>
+<tr><td>Memory placement</td><td colspan="2">Both <code>.tflite</code> files are written to flash as raw blobs and read into PSRAM buffers by <code>spi_flash_read</code> at boot. The reading thread's stack must be in internal SRAM (<code>.bss</code>), because a flash read suspends the cache that PSRAM depends on.</td></tr>
+</table>
+
+<p><strong>ESP-NN integration and compliance.</strong> The 1.3 s figure depends on Espressif's ESP-NN (Apache-2.0) SIMD kernels, and that integration modifies the <strong>public repository</strong> <code>apps/mlearning/tflite-micro</code>. Per contest rules, changes to public repositories are submitted as a fork plus a PR against <code>dev-ai-contest-2026</code> and <strong>are not merged into the team repository</strong>. Consequently <strong>this repository runs reference kernels out of the box (≈6.75 s)</strong>, and ≈1.3 s once the ESP-NN fork is applied. The integration has three parts: (1) the library itself under <code>apps/mlearning/esp-nn/</code>; (2) seven kernel wrappers (conv, depthwise_conv, fully_connected, pooling, add, mul, softmax) placed in <code>.../micro/kernels/esp_nn/</code>; (3) a Makefile block compiling with <code>-DESP_NN=1 -DCONFIG_NN_OPTIMIZED -mlongcalls</code> that <strong>filters out the matching reference kernels</strong> to avoid duplicate symbols. Full wrapper source and reproduction steps are in <code>docs/esp-nn/</code>.</p>
+
+<h4>3.3.2 Cloud model (Agent layer)</h4>
+
+<table>
+<tr><th style="width:22%">Item</th><th>Detail</th></tr>
+<tr><td>Model / provider</td><td>DeepSeek <code>deepseek-chat</code></td></tr>
+<tr><td>API</td><td>OpenAI-compatible Chat Completions with <strong>function calling (tools)</strong>; visible on the console as <code>[llm] OpenAI API with tools (model: deepseek-chat, NNNNN bytes)</code></td></tr>
+<tr><td>Endpoint / transport</td><td><code>https://api.deepseek.com:443</code> via <code>vela_tls</code> + <strong>mbedTLS, TLS 1.2</strong>, with connection pooling</td></tr>
+<tr><td>Authentication</td><td>Bearer API key. <strong>The key lives in a config file on the device's littlefs <code>/data</code> partition — never in source, never in the repository.</strong> (A plaintext key did leak into logs once during development; that was fixed, and <code>sk-*</code> / <code>ghp_*</code> / <code>Bearer *</code> redaction is enabled in the log collector.)</td></tr>
+<tr><td>Link</td><td>On-board USB <strong>CDC-NCM</strong> network interface (<code>eth0</code>, <code>192.168.137.2</code>) → Windows host internet sharing → public internet. The same USB cable simultaneously carries the CDC-ACM console.</td></tr>
+<tr><td>What is uploaded</td><td><strong>Text only</strong>: system prompt, Skills summary, tool schemas, and numbers read from the device's local Markdown files. <strong>No image or audio ever leaves the device.</strong></td></tr>
+<tr><td>Timeouts</td><td>LLM 420 s / socket 480 s, tuned to real round-trips on this path</td></tr>
+</table>
+
+<h4>3.3.3 Key mechanisms</h4>
+
+<p><strong>(1) The recognition-gated feeding state machine.</strong></p>
+<pre>
+if  match score >= 0.45  and  the match is pet P
+and there exists a meal M of P that is due, unfed today, and not skipped
+and P's grams so far today + M's grams <= P's daily cap
+then dispense (grams / grams-per-pocket) pockets
+     -> record a feed event -> update status.md / feed_log.md
+else show "next meal 18:00" on screen, dispense nothing
+</pre>
+
+<p><strong>(2) Trimming the tool registry — the single highest-yield change in the project.</strong> The quantified form of the problem is in §3.1.2⑤. The fix excludes 20 tools irrelevant to a feeder via <code>s_excluded_tools</code> in <code>tool_registry.c</code> (4 wearable + 6 Feishu + 8 music + 2 quick-app), taking the tool count from 36 to <strong>16</strong> and the tool JSON to <strong>4,706 B</strong>. Reliability went from intermittent to <strong>8/8</strong>, and end-to-end latency from <strong>150–300 s down to 3.6–35.6 s</strong>.</p>
+
+<div class="note"><strong>The associated defect — an engineering lesson worth recording:</strong> cutting a tool <strong>leaves its callers behind</strong>. This cut orphaned five natural-language fast-path rows, a hand-written <code>music_search</code> branch, and Feishu copy in every system prompt. Because <code>handle_nl_fast_path()</code> <strong>runs before the LLM</strong>, a fast path pointing at an unregistered tool returns a blank or wrong result <strong>as the final answer</strong>. The standing check is now: after any change to <code>s_excluded_tools</code>, grep for the removed tool names and require zero hits.</div>
+
+<p><strong>(3) Three classes of silent error.</strong> What they share is that <em>the answer reads fluently but did not come from the data</em>:</p>
+<ul>
+<li><strong>The heartbeat replayed its own history</strong> — persisted session history survives reboots, so every firing after the first was reciting. <code>history_json</code> is <code>calloc</code>'d once <em>outside</em> the loop, so it needs an explicit <code>'\0'</code>.</li>
+<li><strong><code>list_dir</code> prefix matching plus the local-tool shortcut</strong> — the prefix was matched against an absolute path while the model passed a relative one, and because the tool sits in the local shortcut set, <code>(no files found)</code> was delivered to the owner as the answer. The fix <strong>accepts both spellings</strong> (the model actually uses three).</li>
+<li><strong>Stale console history suppressing tool calls</strong> — the fix is not to trim history but to <strong>insert a <code>system</code> message mid-array</strong> forcing a re-read. The old history stays on disk untouched, and the result is still <code>iters=3 tools=2</code> with a correct answer.</li>
+<li><strong><code>ask</code> truncating at the seventh word</strong> — root cause was <code>MAX_ARGS 8</code> in <code>nsh_commands.c</code>, raised to <strong>32</strong>.</li>
+</ul>
+
+<p><strong>(4) Verification methodology.</strong> This project is deliberately distrustful of "it looks like it works", and settled on three criteria. <code>END status=ok iters=N tools=M</code> is the only real signal — a perfect answer with <code>iters=1 tools=0</code> is a history replay. <code>[skills] Skills summary: NNN bytes</code> is what proves a Skill loaded; <code>Skills system ready (N built-in)</code> is a compile-time constant and proves nothing. And to test whether a reply genuinely came from the remote model, <strong>enrol a new pet mid-run</strong> — if the next firing finds it, an in-RAM <code>llm_cache</code> replay is ruled out.</p>
+
+<h4>3.3.4 Depth of openVela usage</h4>
+
+<p>VelaPaw is not a thin application sitting on a BSP; it cuts vertically through openVela's graphics, AI, multimedia, filesystem, USB, and networking subsystems. <strong>All three headline capability areas are used:</strong></p>
+
+<table>
+<tr><th style="width:14%">Area</th><th style="width:26%">openVela components used</th><th>Depth</th></tr>
+<tr><td><strong>AI</strong></td><td><code>apps/mlearning/tflite-micro</code> (with <code>MATH_GEMMLOWP</code> / <code>MATH_RUY</code> / <code>MATH_KISSFFT</code> / <code>SYSTEM_FLATBUFFERS</code>)</td><td>The application links it directly and runs <strong>two independent <code>MicroInterpreter</code>s</strong> (identity + body condition) with arenas in PSRAM and inference on a dedicated worker thread; ESP-NN LX7 SIMD kernels are wired into the same runtime (submitted as a fork/PR).</td></tr>
+<tr><td><strong>AI Agent</strong></td><td><code>packages/ai_agent</code> (<code>CONFIG_EXAMPLES_AI_AGENT_VELA</code>)</td><td>Runs on real hardware, not a simulator. Uses the tool system, the Skills engine, the heartbeat (proactive) channel, session persistence, and <code>vela_tls</code>; and contributes <strong>3 patches, 18 files, +570 / −190 lines</strong> back to the framework (§3.4.5).</td></tr>
+<tr><td><strong>Graphics</strong></td><td><code>CONFIG_GRAPHICS_LVGL</code> + <code>LV_USE_NUTTX</code> + <code>LV_USE_NUTTX_TOUCHSCREEN</code>, <code>LCD_FRAMEBUFFER</code>, <code>VIDEO_FB</code></td><td>Four-page touch UI; a custom Noto Sans SC subset font (14/16/20) enabling live EN/中文 switching; hand-drawn bar, line, and gauge widgets on the Trends page (LVGL 9.1 has no <code>lv_meter</code>, so draw_dsc fields are used rather than getters).</td></tr>
+<tr><td><strong>Multimedia</strong></td><td><code>CONFIG_AUDIO</code> + <code>AUDIO_I2S</code> + <code>AUDIO_ES8311</code> + <code>ESP32S3_I2S0</code>, <code>SYSTEM_NXLOOPER</code>; <code>DRIVERS_VIDEO</code> + <code>VIDEO</code></td><td>On-board microphone capture drives the KWS voice scheduler. <strong>A real driver-layer defect was located and fixed: the ES8311 driver never programmed the RX TDM slot map — the root cause of the stalled RX channel.</strong> Also established that <code>nxlooper</code> requires <code>CONFIG_AUDIO_DRIVER_SPECIFIC_BUFFERS</code>. The camera is brought into the video stack through the ESP32-S3 LCD_CAM peripheral with GDMA.</td></tr>
+<tr><td><strong>Filesystem</strong></td><td><code>ESP32S3_SPIFLASH_LITTLEFS</code>, <code>FS_PROCFS</code>, <code>FS_TMPFS</code></td><td>The <code>/data</code> littlefs partition holds Agent config, Skills, sessions, and VelaPaw's feeding records, surviving both reboot and firmware reflash.</td></tr>
+<tr><td><strong>USB / networking</strong></td><td><code>USBDEV_COMPOSITE</code> + <code>CDCACM_COMPOSITE</code> + <code>CDCNCM_COMPOSITE</code>, <code>NET_TCP</code>, <code>NETDB_DNSCLIENT</code>, <code>CRYPTO_MBEDTLS</code></td><td>A single USB cable enumerates both a console (CDC-ACM) and a network interface (CDC-NCM), which is what makes "real hardware + networked Agent + observable console" simultaneously true — the precondition for every piece of Agent evidence recorded for this submission.</td></tr>
+<tr><td><strong>Kernel / memory</strong></td><td><code>XTENSA_IMEM_USE_SEPARATE_HEAP</code>, <code>XTENSA_IMEM_REGION_SIZE=0x48000</code>, <code>ARCH_HAVE_EXTRA_HEAPS</code>, <code>IOB_NBUFFERS/NCHAINS=64</code>, <code>IOB_THROTTLE=24</code></td><td>See the four platform-level fixes in §3.4.5.</td></tr>
+</table>
+
+<h4>3.3.5 Suggested improvements to openVela</h4>
+
+<p>All six come from real hardware experience on this project, ordered by value to the next developer:</p>
+
+<ol>
+<li><strong>Provide an official optimised TFLM kernel path for Xtensa LX7 (ESP-NN).</strong> The tree ships <code>cmsis-nn</code> (ARM) and <code>nnlib-hifi4</code> (HiFi DSP) but nothing for LX7 — despite the ESP32-S3 being this contest's primary chip. The gap is <strong>6.75 s → 1.3 s (5×)</strong>, which directly decides whether on-device vision AI is viable on openVela at all. It should be a Kconfig option in-tree rather than something every team forks for themselves.</li>
+<li><strong><code>mallinfo()</code> / <code>free</code> / <code>memdump</code> hang holding the heap lock on a freshly booted board and kill the whole chip.</strong> <code>ai_agent</code> happens to call a heap walk as the very first statement of its agent task, so every <code>ask</code> froze the machine (initially misdiagnosed as a PSRAM problem). Suggestion: offer a non-blocking or timed variant of the heap-walk API, or at minimum document its locking semantics.</li>
+<li><strong><code>ARCH_HAVE_EXTRA_HEAPS</code> is a <code>select</code>ed symbol and therefore never appears in a defconfig</strong> — yet it is one of the three symbols required to keep task stacks out of PSRAM, and missing any one of them deadlocks the first <code>ask</code>. Suggestion: state the dependency explicitly in the <code>XTENSA_IMEM_USE_SEPARATE_HEAP</code> help text.</li>
+<li><strong>The default IOB pool does not match <code>ai_agent</code>'s default request body.</strong> 36 default tools produce a 19 KB request against roughly 7.8 KB of usable IOB — presenting as an intermittent hang with no timeout, which is the hardest failure class to diagnose. Suggestion: ship a leaner default tool set for MCU targets, or assert on request size at startup.</li>
+<li><strong><code>ai_agent</code>'s local-tool shortcut should be kept consistent with the tool registry.</strong> <code>handle_nl_fast_path()</code> runs before the LLM, so once its target tool is excluded the wrong result is returned to the user as the final answer, with no warning. Suggestion: validate at compile time that the shortcut table is a subset of the registered tools.</li>
+<li><strong>Several config options can silently destroy a board and deserve Kconfig warnings:</strong> <code>CONFIG_RTC</code> (kills the USB console on this board), <code>CONFIG_NETINIT_THREAD</code> (hangs the whole board), <code>CONFIG_DEBUG_USB_INFO</code> (wedges the console). Likewise <code>CONFIG_NSH_LINELEN</code> <strong>silently truncates</strong> an input line at about 80 characters, so provisioning a file with <code>echo … &gt;&gt; /long/path</code> writes corrupted content without any error.</li>
+</ol>
+
+<h3>3.4 Implementation</h3>
+
+<h4>3.4.1 Software and firmware architecture</h4>
+
+<pre>
+contest2026_043_CircuitForge/
+├── app/velapaw/          device application (mapped into packages/demos/ by the manifest linkfile)
+│   ├── ui/               LVGL UI + i18n + CJK font        ui_lvgl.c 4,104 lines
+│   ├── infer/            inference API + TFLM backend + two .tflite   backend_tflm.cc 399
+│   ├── identity/         enrolment · cosine match · flash persistence  419
+│   ├── store/            history · trends · appetite analysis          625
+│   ├── voice/            KWS + dialog + mic capture   kws.cc 822 / mic.c 2,370
+│   └── hal/              camera (4 backends) / feeder (2 backends)
+├── agent/                ai_agent layer: custom Skill · heartbeat list · 3 framework patches
+├── board/                board files: display/camera/RTC/stepper (esp32s3_st7789.c 961)
+│                         auto-start (esp32s3_appinit.c 284) · bringup (658) · defconfig (205)
+├── host/                 off-device training and export (TensorFlow/Keras, ~4,941 Python lines)
+├── hardware/             3D-printed dispenser (OpenSCAD source + STL + BOM)
+├── docs/                 engineering notes · benchmarks · ai_agent guide (all bilingual)
+└── logs/                 AI-coding session logs (auto-collected, never hand-edited)
+</pre>
+
+<p>Hand-written C/C++ totals <strong>13,049 lines</strong> across <code>app/</code> and <code>board/</code> (excluding generated model arrays, font tables, and assets); host-side Python is about <strong>4,941 lines</strong>; patches against <code>packages/ai_agent</code> are <strong>+570 / −190 lines</strong>; the board defconfig is <strong>205 lines</strong>. The build artefact <code>nuttx.bin</code> is <strong>1,561,920 B (1.49 MB)</strong>.</p>
+
+<p><strong>Flash layout (16 MB)</strong></p>
+<table>
+<tr><th style="width:14%">Offset</th><th style="width:26%">Contents</th><th style="width:12%">Size</th><th>Notes</th></tr>
+<tr><td><code>0x000000</code></td><td>Firmware <code>nuttx.bin</code></td><td>1.49 MB</td><td>openVela + application + LVGL + TFLM + ai_agent</td></tr>
+<tr><td><code>0x180000</code></td><td><code>/data</code> (littlefs)</td><td>—</td><td>Agent config / key / Skills / sessions / feeding records; survives reflash</td></tr>
+<tr><td><code>0x600000</code></td><td>Identity model <code>velapaw.tflite</code></td><td>1.44 MB</td><td>Read into PSRAM at boot</td></tr>
+<tr><td><code>0x760000</code></td><td>Body-condition model <code>bcs.tflite</code></td><td>626 KB</td><td>Read into PSRAM at boot</td></tr>
+<tr><td><code>0x800000</code></td><td>Enrolled pets (magic <code>VPAW</code>)</td><td>8 KB</td><td>Names · schedules · face embeddings</td></tr>
+<tr><td><code>0x810000</code></td><td>Pet avatars (magic <code>VICN</code>)</td><td>32 KB</td><td>Card thumbnails</td></tr>
+</table>
+<div class="note"><strong>No-go address:</strong> writing <code>0x818000</code> wedges the SoC and it is permanently banned in this project (which is why the UI language setting is RAM-only).</div>
+
+<h4>3.4.2 Data flow</h4>
+
+<pre>
+[FEEDING PATH — entirely on-device, zero network dependency]
+
+  OV5640 frame (LCD_CAM + GDMA)
+        |
+        v
+  preprocess -> 128x128 INT8
+        |
+        v  [worker thread, ~1.3 s, UI never blocks]
+  TFLM identity model --> 128-D L2-normalised embedding
+        |
+        v
+  cosine match against enrolled pets --> (pet id, score, margin)
+        |
+        +-- score < 0.45 ----------------------> no dispense; UI shows "not recognised"
+        |
+        v score >= 0.45
+  +------------- dual-condition gate -------------+
+  | (1) does this pet have a meal due, unfed      |
+  |     today, and not skipped?                   |
+  | (2) grams today + meal grams <= daily cap?    |
+  +--------+----------------------------+---------+
+        both true                   either false
+           |                             |
+           v                             v
+  28BYJ-48 rotates N pockets     UI shows "next meal 18:00"
+  grams = pockets x grams/pocket
+           |
+           v
+  append history (littlefs) -> update trends / appetite baseline / body condition
+           |
+           v
+  write /data/ai_agent/velapaw/status.md    (per pet: grams today, meal count,
+                                             7-day total, baseline, appetite %,
+                                             body condition, daily limit)
+        /data/ai_agent/velapaw/feed_log.md  (feed events with timestamp + match score)
+
+[AGENT PATH — the only networked layer]
+
+  (A) proactive: heartbeat service fires every N minutes
+        |  injects /data/ai_agent/HEARTBEAT.md as a system message
+        v
+  (B) reactive: console  ask "how much did bob eat today"
+        |
+        v
+  agent_loop --> system prompt + Skills summary (916 B) + tool schemas (4,706 B)
+        |
+        v  TLS 1.2 / mbedTLS / vela_tls -- CDC-NCM eth0 192.168.137.2 --> DeepSeek
+        |
+        v  model returns tool_calls
+  list_dir -> read_file(status.md) -> read_file(feed_log.md)  [executed locally]
+        |
+        v  file contents fed back, request re-issued
+  final answer --> console / proactive push
+        |          (if all is well: replies HEARTBEAT_OK only; the device stays quiet)
+        v
+  session persisted to /data/ai_agent/sessions/tg_&lt;chat_id&gt;.jsonl
+  (console and heartbeat use separate namespaces)
+</pre>
+<p class="caption">Figure 3-2 — Data flow and processing</p>
+
+<h4>3.4.3 Hardware design and board bring-up</h4>
+
+<p><strong>Was a new hardware platform adapted / were drivers developed? <span style="color:#8a1f11">Yes.</span></strong> The Waveshare ESP32-S3-Touch-LCD-3.5-C has <strong>no existing board support in openVela</strong>. This project added a complete board implementation on top of <code>esp32s3-devkit</code> (<code>board/</code>, 1,903 lines of C plus a 205-line defconfig), <strong>driving the following four peripherals from scratch</strong>:</p>
+
+<table>
+<tr><th style="width:20%">Peripheral</th><th style="width:26%">Connection</th><th>Driver highlights</th></tr>
+<tr><td><strong>ST7796 touch panel</strong><br>320×480</td><td>Hardware SPI2 + GDMA at 40 MHz; CLK=GPIO5, MOSI=GPIO1, CS=GPIO4; FT5x06 touch on I²C0 (SCL=7 / SDA=8)</td><td>See "the hardest debug" below. Pixel rows must pass through an <strong>internal-SRAM bounce buffer</strong> — SPI DMA cannot read PSRAM cache-coherently. Address-window setup was batched from 11 SPI calls down to <strong>5</strong> (LVGL resets the window on every <code>putarea</code>).</td></tr>
+<tr><td><strong>OV5640 camera</strong></td><td>ESP32-S3 <strong>LCD_CAM</strong> peripheral with a GDMA receive channel, configured over SCCB/I²C; brought out on a <strong>30 cm FFC with a 1:1 coupler</strong></td><td>The preview was initially <strong>transposed 90° and tinted violet</strong> — two independent root causes. (a) Flip/mirror: bits 1 and 2 of <code>0x3820</code>/<code>0x3821</code> must be cleared, and the transposition itself can only be corrected in the software resample — the registers structurally cannot do it. (b) <strong>The BLC pattern register <code>0x4514</code> must be set to <code>0x88</code></strong>. The discriminator is a reusable rule: <strong>whole-frame hue is decisive — a flip or Bayer-phase error swaps red and blue and can never lose green, so violet (R+B, no G) means <code>0x4514</code>, not the flip bits</strong>.</td></tr>
+<tr><td><strong>PCF85063 RTC</strong></td><td>I²C0, <strong>raw register access</strong></td><td>Deliberately does <strong>not</strong> use <code>CONFIG_RTC</code> — on this board it kills the USB CDC console. The boot time seed is designed as a <strong>floor anchored to the build date</strong> rather than a "anything before 2017 is invalid" plausibility test: the latter pins the board to one date forever with no way to correct it (<code>wall_set_min</code> only rewrites hours and minutes, and nsh has no <code>date</code>).</td></tr>
+<tr><td><strong>28BYJ-48 stepper feeder</strong></td><td>ULN2003 driver board, IN1–IN4 = <strong>GPIO9 / 10 / 11 / 43</strong>; separate 5 V supply, <strong>common ground only</strong></td><td>Full-step sequence in software. <strong>IN4 must be GPIO43 (U0TXD), not GPIO44 (U0RXD)</strong> — GPIO44 is clamped and cannot drive the coil cleanly, which was the real cause of the early "buzzes but won't turn" (a pin problem, not a phase-order problem). GPIO43 is free because the console runs over USB-Serial/JTAG rather than UART0. <strong>The stepper must never use GPIO12–16</strong> — those are the ES8311 codec's private I²S bus (not brought out to any header) and are already claimed by the voice feature.</td></tr>
+<tr><td><strong>ES8311 audio</strong></td><td>I²S0: MCLK=12, BCLK=13, DIN=14, WS=15, DOUT=16; 16 kHz</td><td>Getting microphone capture working required <strong>locating and fixing a driver-layer defect: the RX TDM slot map was never programmed</strong> — the true root cause of the stalled RX channel. A PSRAM cache trap additionally forced a two-slot stream over an 18-buffer pool, with the live slot flipping per capture.</td></tr>
+</table>
+
+<p><strong>The hardest debug: the hardware-SPI display.</strong> Full-screen writes worked, any partial window never appeared, and the identical byte sequence over bit-banging worked fine. It <strong>survived roughly 60 rebuilds</strong> — framebuffer mirroring, DMA on/off, software CS, PSRAM coherency, forced pin routing all had no effect.</p>
+<ul>
+<li><strong>Method — measure, don't guess.</strong> The SPI pins are not brought out to any header, so the board firmware was made to <strong>mirror <code>FSPID_OUT</code> and <code>FSPICLK_OUT</code> onto spare header pins</strong> through the GPIO matrix, plus a trigger marker, and captured with a logic analyser (sigrok/PulseView + an FX2 clone). <strong>The decisive first step was a ground-truth test</strong>: drive four known square waves on the probe pins and refuse to trust any capture until they read cleanly. That step immediately exposed a wiring/grounding fault which had been the source of all the earlier "garbage" captures — only afterwards was the real capture trustworthy.</li>
+<li><strong>Finding.</strong> The decode showed the ESP32 emitting <strong>byte-perfect</strong> <code>CASET 00 28 00 8B / RASET 00 28 00 8B / RAMWR / pixels</code>, with correct DC alignment, exactly eight clean clock edges per byte, and no glitches. <strong>The peripheral was innocent all along.</strong></li>
+<li><strong>Root cause.</strong> This panel's <strong>chip select is hardwired low</strong>, so it can never resynchronise its bit counter on a CS edge — it just keeps counting clocks. The firmware initialised the panel by bit-banging and only <em>then</em> handed the pads to the SPI peripheral; <strong>that handover adds or drops a single clock edge</strong>, and from that instant the panel is off by one bit. Every subsequent command decodes to garbage, <code>RAMWR</code> is never recognised, no pixels reach GRAM, and the screen keeps showing whatever bit-banging drew last — which looks <em>exactly</em> like "hardware SPI drew nothing".</li>
+<li><strong>Fix.</strong> Hand the pads to SPI <strong>first</strong>, then <strong>hardware-reset the panel</strong> (a software reset will not do — the reset command itself would be misread), then run the entire init sequence over SPI. Once the panel resynchronises under SPI ownership, partial windows render correctly.</li>
+<li><strong>Payoff.</strong> With the path open, the display left bit-banging behind for 40 MHz hardware SPI2 + GDMA: a full 480×320 repaint went from <strong>≈246 ms to ≈61 ms (4×)</strong>. A bug that looked like a dead end became a performance win.</li>
+</ul>
+
+<p><strong>Mechanical design (<code>hardware/</code>).</strong> Gravity hopper → paddle rotor → chute → bowl. Every part is parametric OpenSCAD source plus print-ready STL (PLA/PETG, 0.2 mm layers, 3 perimeters, no supports), with a JLC-outsourced parts list. The camera is removed from the mainboard and mounted, via a 30 cm FFC and a 1:1 coupler, inside a <code>cam_pod</code> on a two-legged <code>cam_mast</code> that straddles the chute — so <strong>the screen faces the owner while the lens faces the pet</strong>. <span style="color:#8a1f11"><strong>Safety warning: a reversed FFC is fatal at first power-on</strong></span> — board pin N lands on camera pin 25−N, shorting a power rail straight onto data or ground pins. The camera module's ground is also <strong>not internally common</strong>, so orientation cannot be confirmed by metering "through" the camera; it must be checked against the <code>1</code>/<code>24</code> silkscreen and bare-copper continuity (verified pin by pin on 2026-07-30).</p>
+
+<h4>3.4.4 Application and interaction design</h4>
+
+<p><strong>There is no companion app, no account, and no cloud console</strong> — that is part of the product position, not a missing feature. All interaction happens on the device itself:</p>
+
+<table>
+<tr><th style="width:16%">Surface</th><th>Design</th></tr>
+<tr><td><strong>Touchscreen (primary)</strong></td><td>Four LVGL pages: <strong>Enroll</strong> (take a few close front-facing photos → store the mean embedding), <strong>Recognize</strong> (live preview + match result + dispense), <strong>My Pets</strong> (edit name, meals, grams, daily cap, per-meal skip; delete; avatar), <strong>Trends</strong> (intake bars, appetite line, body-condition gauge). The device <strong>boots straight into the UI</strong> (auto-started by <code>board_app_initialize()</code>) with no serial connection needed — it behaves like an appliance, not a dev board.</td></tr>
+<tr><td><strong>Voice (hands-free)</strong></td><td>A three-step MEAL→HOUR→CONFIRM dialog, started by tapping on the "edit pet" page, using an on-device KWS model over a constrained vocabulary. Verified end-to-end on hardware (e.g. COMMIT meal 2 = 08:00).</td></tr>
+<tr><td><strong>Bilingual</strong></td><td>Live 中文 / EN switching with a custom Noto Sans SC subset font. All UI strings, documentation, and README are bilingual.</td></tr>
+<tr><td><strong>Agent Q&amp;A (console)</strong></td><td><code>ask &lt;natural language&gt;</code>, e.g. <code>ask how much did bob eat today</code>. Answers come from the device's own records, not canned text.</td></tr>
+<tr><td><strong>Agent proactive push</strong></td><td>Heartbeat-triggered and <strong>unattended</strong>; speaks only when a threshold is crossed. This is the layer that means the owner does not have to walk over to the screen.</td></tr>
+</table>
+
+<h4>3.4.5 Custom Skill (mandatory for the AI Hardware Product Innovation track)</h4>
+
+<p><strong>Skill file:</strong> <code>velapaw-feeding-digest.md</code> (VelaPaw Feeding Digest)<br>
+<strong>In repository:</strong> <code>agent/skills/velapaw-feeding-digest.md</code><br>
+<strong>On device:</strong> <code>/data/ai_agent/skills/velapaw-feeding-digest.md</code></p>
+
+<div class="note"><strong>Path note:</strong> the track guide specifies <code>/data/agent/skills/</code> as the runtime Skill directory; this implementation uses <strong><code>/data/ai_agent/skills/</code></strong> because that is the directory the current <code>packages/ai_agent</code> framework <em>actually</em> scans on the device (evidenced by the console line <code>[skills] Skill exists: /data/ai_agent/skills/…</code>). The two are semantically equivalent; aligning with the specified directory is a mount-point rename.</div>
+
+<p><strong>Skill definition (full text):</strong></p>
+<pre>
+# VelaPaw Feeding Digest
+Report pet feeding, appetite and body condition.
+
+## When to use
+When asked about a pet, feeding, how much a pet ate, appetite,
+body condition or feeder status. Also used by the periodic heartbeat check.
+
+## How to use
+1. read_file /data/ai_agent/velapaw/status.md
+   Per pet it gives grams today, meal count, 7-day total, baseline,
+   appetite percent, body condition, daily limit.
+2. read_file /data/ai_agent/velapaw/feed_log.md
+   Recent feed events with timestamps and match score.
+3. Report per pet: grams today vs the daily limit, appetite vs baseline,
+   and body condition.
+4. Flag a concern ONLY if any of these is true:
+   - appetite below 50 percent of baseline
+   - grams today reached the owner daily limit
+   - body condition is not ideal
+   - no feed event today in the log
+5. Otherwise say the pet is on track, one sentence.
+6. Use only numbers from those files. Never invent.
+</pre>
+
+<p><strong>Trigger scenarios (both verified on real hardware):</strong></p>
+
+<ol>
+<li><strong>Reactive — the owner asks.</strong> A console query such as <code>ask how is jay doing today</code> matches <em>When to use</em>; the Agent runs <code>list_dir</code> → <code>read_file(status.md)</code> → <code>read_file(feed_log.md)</code> and answers from the actual numbers. Captured on hardware: <code>[llm] OpenAI API with tools (model: deepseek-chat, 11559 bytes)</code> → <code>END status=ok iters=3 tools=2 llm_ms=4340 elapsed=5s</code>, answering "<em>Today: 15 g in 1 meal / Appetite: 34% of baseline (44 g/day) / Owner daily limit: 60 g/day</em>".</li>
+
+<li><strong>Proactive — the heartbeat health check</strong> (the track's required "proactive + execution" scenario). The task item in <code>/data/ai_agent/HEARTBEAT.md</code> reads: <em>"Run the VelaPaw Feeding Digest skill. If it finds a concern, notify the owner with numbers. If all is on track, reply HEARTBEAT_OK only."</em> The heartbeat service (<strong>the heartbeat service, not cron</strong>) injects that file as a <code>system</code> message at a fixed interval and triggers a full agent loop. <strong>Silence is the normal state</strong> — a push happens only when one of the four thresholds in step 4 of the Skill is crossed. A captured <strong>unattended</strong> firing: <code>iters=4 tools=3</code> with four <code>read_file</code> calls and request bodies of <strong>15,592 → 16,209 → 17,697 → 18,760 B</strong>.</li>
+</ol>
+
+<p><strong>To prove this is genuinely running rather than replaying</strong>, a reproducible criterion is used: <strong>enrol a new pet while the heartbeat is running</strong>; if the next firing finds it, an in-RAM <code>llm_cache</code> replay is ruled out. That test passes — every firing is a real remote call. (There genuinely was a defect where firings after the first were served from cache; it is fixed by keying around <code>chat_id</code>.)</p>
+
+<p><strong>Four platform-level fixes (<code>agent/patches/</code>, 3 patches / 18 files / +570 −190 lines)</strong> — without them <code>ai_agent</code> does not run on this board at all:</p>
+
+<table>
+<tr><th style="width:6%">#</th><th style="width:26%">Problem</th><th>Fix</th></tr>
+<tr><td>1</td><td>The first <code>ask</code> <strong>froze the entire chip</strong></td><td>Root cause: <code>agent_loop</code>'s pthread stack landed in <strong>PSRAM (<code>0x3c…</code>)</strong>, and littlefs' flash read disables the cache PSRAM depends on. Fixed with three Kconfig symbols: <code>XTENSA_IMEM_USE_SEPARATE_HEAP</code> + <code>XTENSA_IMEM_REGION_SIZE=<strong>0x48000</strong></code> + the easily-missed <code>ARCH_HAVE_EXTRA_HEAPS</code>. <strong><code>0x30000</code> stops the freeze but is not shippable</strong> — every task and pthread stack is carved from this heap, and ai_agent's task plus six pthreads on top of velapaw's 48 KB stack makes <code>pthread_create</code> return <code>ENOMEM</code>.</td></tr>
+<tr><td>2</td><td>A heap walk kills a freshly booted board</td><td><code>agent_loop_task</code>'s very first statement was <code>mallinfo()</code>, and <code>free</code>/<code>memdump</code>/<code>mallinfo</code> hang holding the heap lock on a fresh boot, killing the whole chip. Replaced with status reporting that does not walk the heap. (The "676 MB phantom node" was the broken walk itself, not memory corruption.)</td></tr>
+<tr><td>3</td><td>IOB exhaustion hung requests silently</td><td><code>IOB_NBUFFERS</code> / <code>IOB_NCHAINS = 64</code>, <code>IOB_THROTTLE = 24</code> (<strong>160 chains is larger but will not boot</strong>), plus a host→board ping to prime ARP first. The 1420 vs 1514 MTU difference is <strong>real but not the cause</strong> — <code>PKTSIZE</code> should not be "fixed".</td></tr>
+<tr><td>4</td><td>An LLM timeout discarded a successful answer</td><td><code>AGENT_LLM_TIMEOUT_SEC=420</code>, socket <code>480</code>. The old 60 s default threw away a 62.6 s answer that had actually succeeded, while presenting as "request timed out".</td></tr>
+</table>
+
+<h3>3.5 Testing and Results</h3>
+
+<h4>3.5.1 Test environment</h4>
+
+<table>
+<tr><th style="width:20%">Item</th><th>Configuration</th></tr>
+<tr><td>Hardware under test</td><td>Waveshare ESP32-S3-Touch-LCD-3.5-C (ESP32-S3-WROOM-1-N16R8: 8 MB octal PSRAM @80 MHz, 16 MB flash) + OV5640 on a 30 cm FFC + 28BYJ-48/ULN2003 on a separate 5 V ≥2 A supply (common ground) + the 3D-printed dispenser</td></tr>
+<tr><td>Firmware</td><td>openVela / NuttX, <code>esp32s3-devkit:waveshare_lcd</code>; <code>nuttx.bin</code> 1,561,920 B</td></tr>
+<tr><td>Build environment</td><td>Linux VM under VMware, <code>./build.sh esp32s3-devkit:waveshare_lcd -j4</code>; flashed from a Windows 11 host with <code>esptool</code></td></tr>
+<tr><td>Console / network</td><td>One USB cable: CDC-ACM console (<code>nsh&gt;</code> / <code>vela&gt;</code>) plus CDC-NCM interface <code>eth0 192.168.137.2/24</code>, reaching the internet through Windows ICS</td></tr>
+<tr><td>Cloud</td><td>DeepSeek <code>deepseek-chat</code>, TLS 1.2 / mbedTLS</td></tr>
+<tr><td>Host-side evaluation</td><td>Model separability: validation set of <strong>1,559 images across 39 individuals</strong>, INT8 models, 50 latency samples</td></tr>
+</table>
+
+<h4>3.5.2 Functional tests</h4>
+
+<table>
+<tr><th style="width:34%">Case</th><th style="width:10%">Result</th><th>Criterion / evidence</th></tr>
+<tr><td>Boots straight into the feeder UI</td><td>✅</td><td>No serial connection needed; auto-started by <code>board_app_initialize()</code>; visible throughout the demo video</td></tr>
+<tr><td>Enrol a new pet (photos → mean embedding)</td><td>✅</td><td>On hardware; recognisable immediately after enrolment, <strong>with no retraining and no reflash</strong></td></tr>
+<tr><td>Recognise and feed per pet</td><td>✅</td><td>On hardware; dispenses only when recognition and schedule are both satisfied</td></tr>
+<tr><td>Schedule gate: nothing before the due time</td><td>✅</td><td>UI shows "next meal 18:00"</td></tr>
+<tr><td>At most once per meal per day; per-meal skip</td><td>✅</td><td>On hardware</td></tr>
+<tr><td>Daily gram cap</td><td>✅</td><td>On hardware; confirmed by the Agent reading back "Owner daily limit: 60 g/day"</td></tr>
+<tr><td>Body-condition scoring (3-class)</td><td>✅</td><td>On hardware, via the second TFLM interpreter</td></tr>
+<tr><td>Intake trends + appetite-drop alerting</td><td>✅</td><td>Trends page bars/line/gauge; Agent reports "Appetite: 34% of baseline"</td></tr>
+<tr><td>Stepper dispensing (pocket-quantised)</td><td>✅</td><td>On hardware (GPIO9/10/11/43); mechanism assembled</td></tr>
+<tr><td>Voice scheduling MEAL→HOUR→CONFIRM</td><td>✅</td><td>End-to-end on hardware (e.g. COMMIT meal 2 = 08:00)</td></tr>
+<tr><td>Live EN/中文 switching</td><td>✅</td><td>On hardware</td></tr>
+<tr><td>Schedules / pets / avatars survive power loss</td><td>✅</td><td>Hardware RTC + flash persistence</td></tr>
+<tr><td>Full feeder functionality offline</td><td>✅</td><td>Recognition, scheduling, dispensing, UI, and voice have no network dependency</td></tr>
+<tr><td><code>ai_agent</code> starts on hardware and loads the Skill</td><td>✅</td><td><code>[tools] Tools JSON built (16 builtin + 0 providers)</code>, <code>[skills] Skill exists: /data/ai_agent/skills/…</code>, <code>[agent] Tools JSON loaded: 4706 bytes</code></td></tr>
+<tr><td><code>ask</code> answers from real device data</td><td>✅</td><td><code>END status=ok iters=3 tools=2</code> (<code>iters=1 tools=0</code> is treated as a replay and does not count as a pass)</td></tr>
+<tr><td>Proactive push fires <strong>unattended</strong></td><td>✅</td><td>Captured: <code>iters=4 tools=3</code> with four <code>read_file</code> calls</td></tr>
+<tr><td>Proactive push stays silent when all is well</td><td>✅</td><td>Replies <code>HEARTBEAT_OK</code> only when no threshold is crossed</td></tr>
+<tr><td>Skill refuses to invent numbers</td><td>✅</td><td>Skill rule 6, plus every number in the answer matching <code>status.md</code> item for item</td></tr>
+</table>
+
+<h4>3.5.3 Performance</h4>
+
+<table>
+<tr><th style="width:30%">Metric</th><th style="width:16%">Measured</th><th style="width:16%">Baseline</th><th>Notes</th></tr>
+<tr><td><strong>Identity inference latency</strong></td><td><strong>≈1,310 ms</strong></td><td>≈6,750 ms<br>(TFLM reference kernels)</td><td>ESP-NN LX7 SIMD kernels, <strong>≈5× faster</strong>. Runs on its own thread, so <strong>the UI never blocks</strong>.</td></tr>
+<tr><td>Recognition rate (on-demand)</td><td>≈0.76 /s</td><td>≈0.15 /s</td><td>Recognition is triggered when a pet arrives at the bowl, not run continuously — a deliberate power and compute decision.</td></tr>
+<tr><td><strong>Full-screen repaint (480×320)</strong></td><td><strong>≈61 ms</strong></td><td>≈246 ms<br>(bit-banged GPIO)</td><td>40 MHz hardware SPI2 + GDMA, <strong>≈4× faster</strong>; window setup batched from 11 SPI calls to 5.</td></tr>
+<tr><td>Tensor arena<br><span style="font-size:9pt;color:#666">(early spike, QEMU)</span></td><td><strong>84,420 B</strong></td><td>204,800 B configured</td><td>Non-persistent 55,296 B + persistent 29,124 B. <strong>Not an S3 measurement</strong>, but sufficient to establish that the arena is not a constraint against 8 MB of PSRAM.</td></tr>
+<tr><td>Compute split per inference<br><span style="font-size:9pt;color:#666">(early spike, QEMU)</span></td><td>CONV_2D 84%<br>DEPTHWISE 16%</td><td>—</td><td>643,819 / 122,680 / 768,105 ticks; <code>AllocateTensors</code> 24,860 ticks (one-off). <strong>Not an S3 measurement</strong>; used to decide that optimisation had to target the INT8 convolution kernels — a judgement later validated by the 5× speedup measured on S3.</td></tr>
+<tr><td>Firmware size</td><td><strong>1,561,920 B</strong></td><td>16 MB flash</td><td>openVela + LVGL + TFLM + <code>ai_agent</code> + application; the two models occupy a further 2.05 MB of raw flash.</td></tr>
+<tr><td><strong>Agent end-to-end response</strong></td><td><strong>3.6 – 35.6 s</strong></td><td><strong>150 – 300 s</strong><br>(before the tool cut)</td><td>Typical captures: <code>llm_ms=4340 elapsed=5s</code>, <code>llm_ms=5260 elapsed=7s</code>.</td></tr>
+<tr><td>Agent request body</td><td>11,312 → 12,667 → 14,008 B<br>(three <code>ask</code> rounds)</td><td>19,391 B<br>(single round, before)</td><td>Tool schemas cut from 9,946 B to <strong>4,706 B</strong>; Skills summary 916 B.</td></tr>
+<tr><td>Agent buffers</td><td>ctx 8,192 / hist 8,192 / tool 8,192 B; tool output pool 2 × 16,384 B</td><td>—</td><td>Visible in the console startup log.</td></tr>
+<tr><td>Network buffers</td><td>IOB 64 × 196 = 12,544 B<br>(≈7,840 B usable after THROTTLE 24)</td><td>Default is insufficient</td><td>This ratio is the quantified root cause of the intermittent hang in §3.1.2⑤.</td></tr>
+<tr><td>Host-side model latency</td><td>fast 0.5 ms / accurate 0.6 ms (p95 0.6 / 0.7 ms)</td><td>—</td><td><strong>Relative host-CPU figures; not representative of the ESP32-S3.</strong> Used only for A/B comparison.</td></tr>
+</table>
+
+<h4>3.5.4 Reliability and accuracy</h4>
+
+<p><strong>(a) Recognition separability (host-side, 1,559 images / 39 individuals, INT8)</strong></p>
+
+<table>
+<tr><th style="width:34%">Metric</th><th style="width:20%">fast model</th><th style="width:20%">accurate model (shipped)</th></tr>
+<tr><td>Model size</td><td>1,312 KB</td><td><strong>1,403 KB</strong></td></tr>
+<tr><td>Operator count</td><td>8</td><td>9</td></tr>
+<tr><td>Intra-class cosine</td><td>0.346</td><td>0.347</td></tr>
+<tr><td>Inter-class cosine</td><td>0.103</td><td><strong>0.023</strong></td></tr>
+<tr><td>Separation margin</td><td>0.243</td><td><strong>0.324</strong></td></tr>
+<tr><td>EER threshold</td><td>0.130</td><td>0.070</td></tr>
+<tr><td><strong>Equal error rate (EER)</strong></td><td>0.328</td><td><strong>0.291</strong></td></tr>
+</table>
+
+<p class="caption">The accurate model was chosen on <strong>separation margin</strong> (0.324 vs 0.243) and the lower EER, at a cost of +91 KB and one extra operator — negligible against a 16 MB flash / 8 MB PSRAM budget.</p>
+
+<div class="note"><strong>An honest reading of this result:</strong> EER 0.291 is a <em>lower-bound-style</em> figure measured on <strong>39 individuals from a public pet dataset under open-set conditions</strong>. It measures the difficulty of "given any two images, are they the same animal", <strong>not the accuracy of the deployed product</strong>. The real scenario is far easier: a household typically has 2–4 pets, enrolment photos are taken close-up and front-facing by the owner, and the match threshold is 0.45 — above the EER threshold, deliberately biased towards refusing rather than mis-feeding. The dominant factor in false accepts and false rejects <strong>is enrolment quality, not the threshold</strong>; that is a structural property of open-set metric learning, since a generic feature extractor inherently struggles to reject arbitrary non-pet objects, which is why the product puts its lever on guiding the user to take tight, well-lit, front-facing photos. <strong>Work not yet done:</strong> long-run false-accept / false-reject statistics for the three household pets under the final camera pose (<code>cam_mast</code> mount, current colour calibration). The current three pets' embeddings were captured on a firmware build that had the <strong>violet colour cast</strong>; after the <code>0x4514</code> fix they must be re-enrolled, and any earlier field accuracy figure is not comparable. This report therefore <strong>gives no such number</strong> rather than giving an untrustworthy one.</div>
+
+<p><strong>(b) Agent reliability</strong></p>
+
+<table>
+<tr><th style="width:34%">Metric</th><th style="width:20%">Before tool cut</th><th style="width:20%">After</th><th>Notes</th></tr>
+<tr><td>Consecutive <code>ask</code> success rate</td><td>Intermittent failures<br>(hang with no timeout)</td><td><strong>8 / 8</strong></td><td>Scored on the <code>END status=ok</code> line, not on whether the answer reads well</td></tr>
+<tr><td>End-to-end latency</td><td>150 – 300 s</td><td><strong>3.6 – 35.6 s</strong></td><td>—</td></tr>
+<tr><td>TLS interruption recovery</td><td colspan="2"><strong>3 / 3 recovered in-band</strong></td><td>Server closes an idle keep-alive → zero-byte response → <code>vela_tls</code> reconnects. <strong>Confirmed not to be a defect.</strong></td></tr>
+<tr><td>Proactive-push authenticity</td><td colspan="2"><strong>Every firing is a real remote call</strong></td><td>Cache replay ruled out by enrolling a pet mid-run and checking the next firing finds it</td></tr>
+</table>
+
+<p><strong>(c) Fault recovery and stability</strong></p>
+<ul>
+<li><strong>Power loss:</strong> the hardware RTC preserves time, and littlefs preserves pets, schedules, avatars, intake history, Agent sessions, and the API key. <code>/data</code> starts at <code>0x180000</code> while the firmware image ends around <code>0x17ec80</code>, so <strong>even reflashing the firmware does not lose data</strong>.</li>
+<li><strong>Network faults:</strong> see the degradation table in §3.2.3. An LLM failure prints an explicit <code>[llm] API error NNN:</code> and <strong>never produces a fabricated answer</strong>.</li>
+<li><strong>Memory variation:</strong> this project <strong>deliberately reports no runtime heap-free figures</strong> — for the reason in fix #2 of §3.4.5: on this board the heap-walk APIs hang holding the lock and kill the chip, and the fix was to report status without walking the heap. The heap numbers the firmware prints are therefore <strong>assumed values, not measurements</strong>, and quoting them as a metric would be misleading. The real memory constraint is the compile-time <code>XTENSA_IMEM_REGION_SIZE</code>: at <code>0x30000</code>, <code>pthread_create</code> returns <code>ENOMEM</code>; at <code>0x48000</code> the board reliably carries the ai_agent task, six pthreads, and velapaw's 48 KB stack. <strong>That binary can/cannot-create-a-thread result carries more information than an untrustworthy free-bytes number.</strong></li>
+<li><strong>Continuous run time:</strong> the longest controlled observation to date is the <strong>600 s</strong> unattended window during demo recording (<code>sleep 600</code>), through which the heartbeat fired on schedule, the console stayed clean, and the Agent answered normally. <strong>Longer soak testing (24 h / 7 d) has not been performed</strong>; it is listed in §3.7.3 and no extrapolation is made here.</li>
+<li><strong>Power consumption:</strong> <strong>not yet measured per-mode with a power analyser</strong>, so no figures are given. The design basis for low power is that recognition is triggered on demand rather than run continuously (avoiding a 1.3 s inference occupying both cores back-to-back) and that the stepper is driven only briefly when the gate passes; the stepper's ≈240 mA per phase is carried by the separate 5 V supply and does not pass through the mainboard. Quantitative measurement is listed as future work.</li>
+</ul>
+
+<h4>3.5.5 Analysis</h4>
+
+<p>Mapping the results back onto the six challenges in §3.1.2:</p>
+<ol>
+<li><strong>① (compute) solved and quantified:</strong> 6.75 s → 1.31 s. The key was profiling first to establish that 84% of the time was in CONV_2D, so the entire engineering effort could be aimed at the kernel library rather than scattered across parameters. <strong>Measure first, optimise second</strong> was this project's highest-return methodology.</li>
+<li><strong>② (no retraining) solved:</strong> enrolment is a pure runtime operation, verified on hardware. The cost is weaker rejection than a closed-set classifier, which §3.5.4 discloses openly rather than glossing over.</li>
+<li><strong>③ (loading a large model) solved:</strong> raw flash plus PSRAM, with the reusable lesson that a flash read suspends the cache — applicable to any ESP32-S3 + PSRAM + large-model project.</li>
+<li><strong>④ (SPI display) solved and converted into a 4× win:</strong> the difference between 60 failed rebuilds and one successful measurement was not effort but <strong>replacing guessing with observation</strong>.</li>
+<li><strong>⑤ (request body vs IOB) solved, and the highest single-change yield:</strong> reliability from intermittent to 8/8 and latency from 150–300 s to 3.6–35.6 s, purely by removing 20 unused tools. This lesson applies to every team running <code>ai_agent</code> on an MCU.</li>
+<li><strong>⑥ (silent errors) solved, and distilled into criteria:</strong> one of the project's most valuable outputs is the set of three "read the log, not the prose" acceptance criteria (<code>END status=</code>, <code>Skills summary: NNN bytes</code>, and injecting new data mid-run). They are the tools that separate "looks like it works" from "is actually working".</li>
+</ol>
+
+<h3>3.6 AI-Native Development</h3>
+
+<p>This project was developed <strong>with AI assistance throughout</strong>. Session logs are collected automatically into <code>logs/KingMbewe/</code> by the organiser-provided <code>contest-log-collector</code> and are <strong>never hand-edited</strong>. All figures below were computed by script directly from that log directory and from the local raw session records.</p>
+
+<table>
+<tr><th style="width:22%">Item</th><th>Data</th></tr>
+<tr><td><strong>Share of code written with AI</strong></td>
+<td><strong>≈100%</strong> (measured as "produced or modified within an AI session"). The repository holds <strong>13,049 lines</strong> of hand-written C/C++ (<code>app/</code> + <code>board/</code>, excluding generated model arrays, CJK font tables, and assets), about <strong>4,941 lines</strong> of host-side Python, <strong>+570 / −190 lines</strong> of patches against <code>packages/ai_agent</code>, and a <strong>205-line</strong> board defconfig — roughly <strong>18,800 lines</strong> in total, all produced in AI pair-programming sessions and verified on real hardware iteration by iteration. The human share was: building and wiring the hardware, taking logic-analyser and multimeter measurements, performing every flash cycle and reading the resulting behaviour, and making directional decisions and falsifying AI conclusions — the several "this claim was later retracted" records in this report are the product of that human verification step.</td></tr>
+
+<tr><td><strong>AI tools used</strong></td>
+<td><strong>Claude Code</strong> (CLI plus the VS Code extension) as the sole coding tool. Models appearing in the sessions: <code>claude-opus-5</code>, <code>claude-opus-4-8</code>, <code>claude-sonnet-5</code>, <code>claude-fable-5</code>.<br>
+Log volume: <strong>17 JSONL files / 78.7 MB / 55,255 collected events</strong> — 7,559 user, 14,963 assistant, 32,733 tool — across <strong>15 collection date directories from 2026-07-08 to 2026-09-04</strong>.<br>
+Tool-call distribution (leading entries): <code>Bash</code> 5,272, <code>PowerShell</code> 4,340, <code>Edit</code> 2,436, <code>Read</code> 2,263, <code>Grep</code> 713, <code>Write</code> 458, <code>AskUserQuestion</code> 247, <code>TodoWrite</code> 168, <code>ToolSearch</code> 126, <code>WebFetch</code> 89, <code>Glob</code> 79, <code>Artifact</code> 38, <code>ScheduleWakeup</code> 34, <code>WebSearch</code> 29, <code>Monitor</code> 22, <code>Skill</code> 17. That <code>Bash</code> and <code>PowerShell</code> together account for 9,612 calls reflects directly that this is a hardware project whose main loop is <strong>build → flash → observe on real hardware</strong>, not a pure software one.</td></tr>
+
+<tr><td><strong>MCP tool usage</strong></td>
+<td><strong>On-device: not used.</strong> <code>CONFIG_AI_AGENT_MCP</code> is <strong>explicitly disabled</strong> in the board defconfig (along with Feishu / WeChat / MQTT / Node). This is a deliberate trade-off — as §3.3.3 shows, request size is this project's hardest constraint on an MCU, and any non-essential tool or protocol extension eats into the IOB budget.<br>
+<strong>Development side: two MCP connectors were configured</strong> (a claude.ai connector and Google Drive) for reading design material and dataset references; because they require interactive OAuth authorisation, they were <strong>never actually invoked</strong> in this project's automated sessions.<br>
+MCP usage is therefore honestly recorded as <strong>0 calls</strong>.</td></tr>
+
+<tr><td><strong>Skills used and added</strong></td>
+<td><strong>Runtime Skills added: 1</strong> — <code>velapaw-feeding-digest</code> (<code>agent/skills/velapaw-feeding-digest.md</code> → <code>/data/ai_agent/skills/</code> on the device), satisfying this track's "at least one custom Skill" requirement; its definition and trigger scenarios are in §3.4.5. The device also carries the framework's <strong>10 built-in Skills</strong>, and the Skills summary in the system prompt is <strong>916 B</strong>.<br>
+<strong>Development-side Skills:</strong> the organiser-provided set installed via the <code>.claude</code> manifest was used, of which the ones that materially contributed here were <code>contest-log-collector</code> (AI-coding log collection), <code>kconfig-tweak</code> (editing <code>.config</code> without menuconfig), <code>openvela-build</code> (build flow), <code>submit-pr</code> (submission flow), and the general-purpose <code>artifact-design</code>. The <code>Skill</code> tool fired <strong>17 times</strong> across the collected logs.<br>
+<strong>A persistent memory store of 40+ entries</strong> was also maintained, recording across sessions which approaches had been <em>falsified on hardware</em> (for example "CONFIG_RTC kills the USB console", "writing <code>0x818000</code> wedges the SoC", "the claim that repeated wapi hangs the console is retracted"). This measurably reduced the cost of re-treading the same ground on a long-running project.</td></tr>
+
+<tr><td><strong>Total token usage</strong></td>
+<td>Summed from 35,074 assistant messages carrying usage records:<br>
+　Input tokens: <strong>340,649</strong><br>
+　Output tokens: <strong>44,262,781</strong><br>
+　Cache-creation tokens: <strong>181,608,127</strong><br>
+　Cache-read tokens: <strong>6,725,913,276</strong><br>
+　<strong>Total: 6,952,124,833 (≈6.95 billion)</strong><br>
+Excluding cache reads, the subtotal is <strong>226,211,557 (≈226 million)</strong>. Cache reads are 96.7% of the total, which is the characteristic shape of a long-context hardware-debugging project: every "change config → build → flash → read console" round carries the full board context back through inference.</td></tr>
+</table>
+
+<p><strong>What AI actually contributed, in order of value:</strong></p>
+<ol>
+<li><strong>Reframing an apparent software bug as a measurable physical one.</strong> All 60 failed rebuilds on the hardware-SPI problem were looking for a cause in software. The turning point was the decision to mirror the SPI pins onto headers, run a ground-truth test first, and decode with a logic analyser. Designing that approach and working through it was a human-AI collaboration; the conclusion — <em>the peripheral is innocent, the problem is panel bit synchronisation</em> — was obtainable only by measurement.</li>
+<li><strong>Discriminating between similar-looking symptoms.</strong> For example: "whole-frame hue is decisive — a flip or Bayer-phase error can never lose green, so violet means <code>0x4514</code>, not the flip bits", which pinned in one step a problem that would otherwise have meant blind-testing dozens of registers.</li>
+<li><strong>Establishing and applying falsification criteria.</strong> Several early "conclusions" in this project were ultimately overturned and explicitly marked as retracted in the memory store (the "repeated wapi hangs the console" claim turned out to be a test-harness artefact; "stale history suppresses tool calls" came from one confounded A/B; "dead TX implies dead clock" was falsified at the register level). <strong>Recording what was disproved matters as much as recording what was proved.</strong></li>
+<li><strong>Debugging across the hardware-software boundary.</strong> The missing ES8311 RX TDM slot map, the ratio between the IOB pool and the request body, the mutual exclusion between PSRAM stacks and the flash cache — none of these sit in a single layer; all required holding kernel configuration, driver registers, and application behaviour simultaneously.</li>
+</ol>
+
+<h3>3.7 Conclusions and Outlook</h3>
+
+<h4>3.7.1 What was achieved</h4>
+
+<p>On a single ESP32-S3, on top of openVela, VelaPaw implements and <strong>verifies on real hardware</strong> every core capability of a multi-pet smart feeder:</p>
+<ul>
+<li><strong>On-device individual recognition with dual-condition gating</strong> — open-set metric learning, so adding a pet needs no retraining; food is dispensed only when recognition and schedule agree.</li>
+<li><strong>On-device health monitoring</strong> — 3-class body condition, a 30-day intake trend, and appetite-drop alerting.</li>
+<li><strong>Hands-free voice scheduling</strong> — a three-step dialog driven by an on-device KWS model, verified end-to-end on hardware.</li>
+<li><strong>An on-device AI agent</strong> — the <code>ai_agent</code> framework running on real hardware with one custom Skill, reactive <code>ask</code> plus proactive heartbeat push, <strong>with an unattended firing captured</strong>.</li>
+<li><strong>A new hardware platform brought up from scratch</strong> — ST7796 display (40 MHz HW SPI + GDMA), OV5640 (LCD_CAM + GDMA), PCF85063 RTC, and the 28BYJ-48 stepper, plus a genuine driver-layer fix contributed for the ES8311 RX slot map.</li>
+<li><strong>A manufacturable mechanical design</strong> — parametric OpenSCAD dispenser with STL and BOM, whose pocket quantisation makes per-pet portioning true mechanically.</li>
+<li><strong>Contributions back to openVela</strong> — 3 patches / 18 files / +570 −190 lines, plus the ESP-NN integration submitted as a fork and PR.</li>
+</ul>
+
+<p>Headline numbers: inference <strong>6.75 s → 1.31 s (5×)</strong>; UI repaint <strong>246 ms → 61 ms (4×)</strong>; Agent response <strong>150–300 s → 3.6–35.6 s</strong> at <strong>8/8</strong> reliability.</p>
+
+<h4>3.7.2 Market outlook and commercial value</h4>
+
+<p><strong>Market signal.</strong> In March 2026 Xiaomi launched the Mijia Smart Pet Feeder 2 Vision Edition (¥449 crowdfunded / ¥549 retail) — a mass-market product built specifically to bring a camera into the feeding scenario. That is the company with the best read on what pet owners will pay for, independently validating VelaPaw's founding judgement with real money: <strong>the camera belongs on the feeder</strong>. VelaPaw takes the same judgement one step further — from "see the bowl" to <strong>"know which one it is"</strong>, entirely on-device.</p>
+
+<p><strong>Target users, in order of willingness to pay:</strong></p>
+<ol>
+<li><strong>Multi-pet households (core).</strong> The sharpest pain: portion management simply does not work with more than one animal. This is the one group whose problem <em>cannot</em> be solved without individual recognition.</li>
+<li><strong>Owners managing prescription diets or weight loss.</strong> A vet's gram-level plan has to actually be executed and recorded; VelaPaw's daily caps plus per-pet history are exactly that record of execution.</li>
+<li><strong>Privacy-sensitive owners.</strong> People unwilling to have household camera footage enter any cloud account. "Images never leave the device" is a hard property here, not a privacy-policy clause.</li>
+<li><strong>Carers of senior pets.</strong> A drop in appetite is the earliest signal of many illnesses; proactive push turns "the owner must log this daily" into "the device speaks up when something is wrong".</li>
+</ol>
+
+<p><strong>Business model.</strong> The core is <strong>one-time hardware sales with no subscription</strong> — a structural advantage that comes directly from on-device AI: with no cloud inference cost, there is no cost to amortise through a subscription.</p>
+<table>
+<tr><th style="width:22%">Revenue stream</th><th>Notes</th></tr>
+<tr><td>Hardware sales (primary)</td><td>Positioned against the ¥449–549 band of camera-equipped feeders. The BOM is essentially an ESP32-S3 module, a 3.5″ touch panel, an OV5640, a stepper, and injection-moulded parts — at volume the cost structure is comparable to existing vision-equipped feeders, while <strong>eliminating the ongoing cost of cloud inference and storage</strong>.</td></tr>
+<tr><td>Consumables and accessories</td><td>Washable hoppers, rotors of differing capacity (changing one <code>WIDTH</code> parameter changes grams-per-pocket), spare bowls.</td></tr>
+<tr><td>Optional cloud add-on (not required)</td><td>The Agent layer's health digest could become an optional subscription (long-term trend reports, vet-readable exports). <strong>Cancelling it leaves every core function intact</strong> — a clear contrast with competitors that brick without a subscription.</td></tr>
+<tr><td>B2B extension</td><td>Multi-cage portioned feeding and intake records for veterinary clinics and boarding facilities — fundamentally the same "identify, portion, record" capability.</td></tr>
+</table>
+
+<p><strong>Differentiators:</strong> (1) individual recognition rather than merely "seeing"; (2) no app, no account, no cloud — it works out of the box; (3) full functionality offline; (4) mechanically guaranteed pocket-level dosing; (5) proactive health monitoring rather than passive viewing.</p>
+
+<h4>3.7.3 Limitations and future work</h4>
+
+<p>Listed <strong>honesty-first</strong>, including the items for which this report deliberately gives <em>no</em> number:</p>
+
+<table>
+<tr><th style="width:28%">Limitation</th><th>Status and plan</th></tr>
+<tr><td><strong>Field recognition accuracy not quantified</strong></td><td>The three enrolled pets' embeddings were captured on a firmware build with the <strong>violet colour cast</strong>; after the <code>0x4514</code> fix they must <strong>all be re-enrolled</strong>, and earlier field data is not comparable. Plan: after re-enrolment, log every match over two weeks under the final camera pose and report false-accept / false-reject rates plus a threshold ROC.</td></tr>
+<tr><td><strong>No long-duration soak test</strong></td><td>Longest controlled observation is a 600 s unattended window. Plan: 24 h and 7 d continuous runs, recording heartbeat firing success rate, TLS reconnection count, littlefs write count and wear, and whether any slow resource leak appears.</td></tr>
+<tr><td><strong>Power consumption not measured</strong></td><td>No per-mode power-analyser data yet. Plan: measure average and peak current for standby (screen on / off), a single inference, and a dispense cycle.</td></tr>
+<tr><td><strong>Runtime heap usage not observable</strong></td><td>Because the heap-walk APIs hang this board, status is currently reported with assumed values. Plan: implement a lightweight lock-free heap statistic (or interval sampling) so memory variation becomes a quantifiable metric — which is also improvement suggestion #2 to openVela.</td></tr>
+<tr><td><strong>ESP-NN not vendored in the team repo</strong></td><td>Submitted as a fork/PR per the rules, so this repository runs reference kernels (6.75 s) out of the box. Plan: publish the PR link in the README once merged, and provide a one-command apply script.</td></tr>
+<tr><td><strong>Weak rejection of non-pet objects</strong></td><td>A structural property of open-set metric learning. Plan: add a very lightweight "is this a pet face" binary gate ahead of embedding matching, which should measurably reduce mis-dispensing.</td></tr>
+<tr><td><strong>No always-on voice wake</strong></td><td>Voice scheduling currently requires a tap to start. Plan: if always-on wake is added, it will use the contest's mandated wake word (<em>你好，openvela</em> / <em>Hello，openvela</em>) exactly.</td></tr>
+<tr><td><strong>Skill runtime directory differs from the spec</strong></td><td>The implementation uses <code>/data/ai_agent/skills/</code> (the directory the framework actually scans); the spec says <code>/data/agent/skills/</code>. Plan: align the mount point once the framework settles on one.</td></tr>
+<tr><td>Agent is console-only</td><td><code>ask</code> currently runs over the NSH console. Plan: surface the Agent's answers and pushes on a "Health" page on the touchscreen, so the owner never needs a serial connection.</td></tr>
+</table>
+
+<hr>
+
+<p style="text-align:center; font-size:10pt; color:#555; margin-top:20pt;">
+Team CircuitForge · VelaPaw · 2026 Inaugural openVela AI Hardware Developer Contest<br>
+Repository: <code>github.com/open-vela/contest2026_043_CircuitForge</code> (branch <code>dev-ai-contest-2026</code>) · Licence: Apache 2.0
+</p>
