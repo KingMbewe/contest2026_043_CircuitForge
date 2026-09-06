@@ -75,8 +75,10 @@
 <table>
 <tr><th style="width:22%">项目</th><th>内容</th></tr>
 <tr><td>作品名称</td><td>VelaPaw —— 端侧 AI 多宠智能喂食器</td></tr>
-<tr><td>参赛赛道</td><td>AI 硬件产品创新</td></tr>
-<tr><td>队伍 / 编号</td><td>CircuitForge / <code>contest2026_043</code></td></tr>
+<tr><td>队伍名称</td><td>CircuitForge（编号 <code>contest2026_043</code>）</td></tr>
+<tr><td>团队分工</td>
+<td><strong>Kingsley Mbewe（金斯利）</strong>，GitHub <code>KingMbewe</code> —— <strong>独立参赛，本作品全部工作均由本人完成。</strong>按工作面划分：产品定义与结构设计；自研 3D 打印叶轮投料机构与整机搭建；openVela / NuttX 板级移植与驱动适配（ST7796 显示、OV5640 摄像头、ES8311 音频、28BYJ-48 步进电机、PCF85063 RTC、USB CDC-NCM 网络）；Xtensa LX7 的 INT8 算子库移植；识别模型训练与端侧 TFLite-Micro 集成；LVGL 中英双语 UI 与趋势看板；语音排程 KWS 对话；<code>ai_agent</code> 集成与自定义 Skill；以及全部文档、演示视频与提交材料。</td></tr>
+<tr><td>选题方向</td><td>AI 硬件产品创新</td></tr>
 <tr><td>硬件载体</td><td>Waveshare ESP32-S3-Touch-LCD-3.5-C（ESP32-S3，Xtensa LX7 双核，8 MB PSRAM，16 MB Flash，320×480 ST7796 电容触摸屏，OV5640 摄像头，PCF85063 RTC，ES8311 音频编解码器）+ 自研 3D 打印叶轮投料机构（28BYJ-48 步进电机 / ULN2003）</td></tr>
 <tr><td>操作系统</td><td>openVela（NuttX），板级配置 <code>esp32s3-devkit:waveshare_lcd</code></td></tr>
 <tr><td>落地的 openVela 能力</td><td><strong>图形</strong>（LVGL）、<strong>AI</strong>（<code>apps/mlearning/tflite-micro</code> + <code>ai_agent</code> 框架）、<strong>多媒体</strong>（NuttX Audio / I²S / ES8311 + <code>apps/video</code> 摄像头栈）—— 三类均已使用</td></tr>
@@ -84,6 +86,10 @@
 <tr><td>开源许可</td><td>Apache License 2.0</td></tr>
 <tr><td>代码托管</td><td>GitHub — <code>github.com/open-vela/contest2026_043_CircuitForge</code>，分支 <code>dev-ai-contest-2026</code></td></tr>
 </table>
+
+<h2>摘要</h2>
+
+<p>多宠家庭的定时喂食器分不清食盆前站着的是哪一只，按只定量、按只控重因而无从谈起。VelaPaw 基于 openVela（NuttX）与 Waveshare ESP32-S3-Touch-LCD-3.5-C，用单摄像头在端侧识别宠物个体，并以"识别 × 排程"双条件门控投喂：仅当认出该宠物、且它当天有一餐到点未喂时才出粮。识别采用开集度量学习而非分类器，模型只输出 128 维 L2 归一化嵌入，新增宠物为纯运行时操作，无需重训练、无需升级固件。实测成果：为 openVela 原本缺失的 Xtensa LX7 移植 INT8 算子库，单次推理由 <strong>6.75 s 降至 1.31 s</strong>；以逻辑分析仪定位屏幕位同步故障后改用 40 MHz 硬件 SPI + GDMA，全屏重绘由 <strong>246 ms 降至 61 ms</strong>；裁剪 20 个未用工具后，<code>ai_agent</code> 单轮请求体由 19 391 B 压入 NuttX IOB 池，端到端时延由 <strong>150–300 s 降至 3.6–35.6 s</strong>。图像处理与投喂决策全部在端侧完成，<strong>任何图像都不离开设备</strong>；唯一联网的 <code>ai_agent</code> 以自定义 Skill 读取喂食器写入 littlefs 的记录，仅在食欲越过阈值时才主动发声。断网后喂食器行为完全不变。</p>
 
 <h2>三、技术报告</h2>
 

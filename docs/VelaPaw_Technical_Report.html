@@ -76,9 +76,11 @@ Date: 2026-09-06
 
 <table>
 <tr><th style="width:22%">Item</th><th>Detail</th></tr>
-<tr><td>Project</td><td>VelaPaw — on-device AI multi-pet smart feeder</td></tr>
-<tr><td>Track</td><td>AI Hardware Product Innovation</td></tr>
-<tr><td>Team / ID</td><td>CircuitForge / <code>contest2026_043</code></td></tr>
+<tr><td>Work name</td><td>VelaPaw — on-device AI multi-pet smart feeder</td></tr>
+<tr><td>Team name</td><td>CircuitForge (ID <code>contest2026_043</code>)</td></tr>
+<tr><td>Team members and division of labour</td>
+<td><strong>Kingsley Mbewe (金斯利)</strong>, GitHub <code>KingMbewe</code> — <strong>a solo entry; all work on this project is his own.</strong> By area: product definition and mechanical design; the self-designed 3D-printed paddle-rotor dispenser and full assembly; the openVela / NuttX board port and driver work (ST7796 display, OV5640 camera, ES8311 audio, 28BYJ-48 stepper, PCF85063 RTC, USB CDC-NCM networking); the INT8 operator-library port for Xtensa LX7; identity-model training and on-device TFLite-Micro integration; the LVGL bilingual UI and Trends dashboard; the keyword-spotting voice-scheduling dialog; <code>ai_agent</code> integration and the custom Skill; and all documentation, the demo video and the submission package.</td></tr>
+<tr><td>Topic direction (track)</td><td>AI Hardware Product Innovation</td></tr>
 <tr><td>Hardware</td><td>Waveshare ESP32-S3-Touch-LCD-3.5-C (ESP32-S3, dual-core Xtensa LX7, 8 MB PSRAM, 16 MB flash, 320×480 ST7796 capacitive touch panel, OV5640 camera, PCF85063 RTC, ES8311 audio codec) plus a self-designed 3D-printed paddle-rotor dispenser (28BYJ-48 stepper / ULN2003)</td></tr>
 <tr><td>OS</td><td>openVela (NuttX), board config <code>esp32s3-devkit:waveshare_lcd</code></td></tr>
 <tr><td>openVela capability areas used</td><td><strong>Graphics</strong> (LVGL), <strong>AI</strong> (<code>apps/mlearning/tflite-micro</code> + the <code>ai_agent</code> framework), <strong>Multimedia</strong> (NuttX Audio / I²S / ES8311 + the <code>apps/video</code> camera stack) — <strong>all three</strong></td></tr>
@@ -86,6 +88,10 @@ Date: 2026-09-06
 <tr><td>Licence</td><td>Apache License 2.0</td></tr>
 <tr><td>Code hosting</td><td>GitHub — <code>github.com/open-vela/contest2026_043_CircuitForge</code>, branch <code>dev-ai-contest-2026</code></td></tr>
 </table>
+
+<h2>Abstract</h2>
+
+<p>An ordinary timed feeder cannot tell which animal is standing at the bowl, so in a multi-pet household per-pet portioning and per-pet weight control are impossible — and per-pet portioning is the first thing a vet prescribes. VelaPaw, built on openVela (NuttX) and a Waveshare ESP32-S3-Touch-LCD-3.5-C, identifies the individual pet on-device from a single camera and gates dispensing on two conditions together: the pet is recognised, <em>and</em> one of its meals is due today and unfed. Recognition uses open-set metric learning rather than classification — the model emits only a 128-dimensional L2-normalised embedding, so enrolling a new pet is a pure runtime operation requiring no retraining and no firmware update. Measured results: porting an INT8 operator library to Xtensa LX7, for which openVela ships none, cut inference from <strong>6.75 s to 1.31 s</strong>; tracing a display fault with a logic analyser to panel bit-desynchronisation allowed a move to 40 MHz hardware SPI with GDMA, cutting full-screen repaint from <strong>246 ms to 61 ms</strong>; and trimming 20 unused tools compressed the <code>ai_agent</code> request body from 19,391 B to fit NuttX's IOB pool, taking end-to-end latency from <strong>150–300 s to 3.6–35.6 s</strong>. All image processing and every feeding decision happen on-device and <strong>no image ever leaves the hardware</strong>; the only networked component, <code>ai_agent</code>, uses a custom Skill to read the records the feeder writes to littlefs and speaks only when an appetite threshold is crossed. Unplugged from the network, the feeder behaves identically.</p>
 
 <h2>3. Technical Report</h2>
 
