@@ -73,6 +73,12 @@ enum
   S_NOTIFICATIONS, S_ALL_NORMAL, S_CLOSE,
   S_ALERT_APPETITE_FMT, S_ALERT_BCS_FMT, S_UNDERWEIGHT, S_OVERWEIGHT,
 
+  /* ai_agent mirrored on the LCD (toast under the bell).  Same glyph rule as
+   * the voice strings: the 中文 column only reuses characters that already
+   * appear elsewhere in this table. */
+  S_AG_YOU_FMT, S_AG_WORKING_FMT, S_AG_CHECKING, S_AG_HB_OK_FMT,
+  S_AG_WARN_FMT, S_AG_REPLY_FMT, S_AG_FAILED, S_AG_DONE,
+
   /* my pets */
   S_ENROLLED_PETS, S_NO_PETS, S_ENROLLED_COUNT_FMT,
   S_TODAY_FMT, S_LIMIT_REACHED, S_WAITING, S_PENDING, S_ATE_FMT, S_SKIPPED,

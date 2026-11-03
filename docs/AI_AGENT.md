@@ -268,7 +268,7 @@ files.
 |---|---|
 | Custom Skill | [`agent/skills/velapaw-feeding-digest.md`](../agent/skills/velapaw-feeding-digest.md) → board `/data/ai_agent/skills/` |
 | Heartbeat task | [`agent/HEARTBEAT.md`](../agent/HEARTBEAT.md) → board `/data/ai_agent/HEARTBEAT.md` |
-| Framework changes | [`agent/patches/`](../agent/patches/) — three patches against `packages/ai_agent` @ `41723c6` |
+| Framework changes | [`agent/patches/`](../agent/patches/) — four patches against `packages/ai_agent` @ `41723c6` |
 | How to apply / verify | [`agent/README.md`](../agent/README.md) |
 | Data bridge | VelaPaw `store` module → `/data/ai_agent/velapaw/{status,feed_log}.md` |
 | Board config | [`board/configs/`](../board/configs/) |

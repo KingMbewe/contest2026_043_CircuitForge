@@ -11,9 +11,14 @@
 #include <stdint.h>
 #include <pthread.h>
 #include "identity/identity.h"
+#include "store/store.h"
 
 static struct velapaw_pet g_pets[VELAPAW_MAX_PETS];
 static int                g_npets;
+
+/* Bumped when another thread (the ai_agent's set_meal tool) changes a pet, so
+ * the UI loop can see it and redraw My Pets without a reboot. */
+static volatile unsigned  g_ident_gen;
 
 /****************************************************************************
  * Flash persistence: enrolled pets survive a reset / power-off.
@@ -237,9 +242,50 @@ void velapaw_identity_init(void)
   velapaw_identity_load();      /* bring back previously enrolled pets + icons */
 }
 
+/* The on-screen enroll keyboard admits a stray comma or a double space, and
+ * this is the only place a name becomes persistent, so trimming here covers
+ * the dialog, the CLI and any future agent tool at once.  Junk in a name
+ * lands in status.md as a broken markdown heading and makes one animal look
+ * like two distinct keys.
+ */
+static void vp_copy_name(char *dst, size_t cap, const char *src)
+{
+  size_t n;
+
+  if (src == NULL)
+    {
+      src = "pet";
+    }
+
+  while (*src == ' ' || *src == '\t')
+    {
+      src++;
+    }
+
+  n = strnlen(src, cap - 1);
+  while (n > 0 && strchr(" \t,;.", src[n - 1]) != NULL)
+    {
+      n--;
+    }
+
+  if (n == 0)
+    {
+      src = "pet";
+      n   = 3;
+    }
+
+  memcpy(dst, src, n);
+  dst[n] = '\0';
+}
+
 int velapaw_identity_count(void)
 {
   return g_npets;
+}
+
+unsigned velapaw_identity_gen(void)
+{
+  return g_ident_gen;
 }
 
 const struct velapaw_pet *velapaw_identity_get(velapaw_pet_id_t id)
@@ -273,8 +319,7 @@ velapaw_pet_id_t velapaw_identity_enroll(
     {
       p->meal_min[k] = meal_min ? meal_min[k] : -1;
     }
-  strncpy(p->name, name ? name : "pet", VELAPAW_NAME_MAX - 1);
-  p->name[VELAPAW_NAME_MAX - 1] = '\0';
+  vp_copy_name(p->name, VELAPAW_NAME_MAX, name);
 
   /* Average the sample embeddings. */
   for (int d = 0; d < VELAPAW_EMBED_DIM; d++)
@@ -307,6 +352,169 @@ velapaw_pet_id_t velapaw_identity_enroll(
     }
 
   return g_pets[g_npets++].id;
+}
+
+/****************************************************************************
+ * Name: velapaw_meal_norm
+ *
+ * Description:
+ *   Fold a pet name to a comparison key: lower case, no leading or trailing
+ *   whitespace, no trailing punctuation.  Deliberately avoids <ctype.h> so
+ *   this file's include block does not have to change.
+ *
+ ****************************************************************************/
+
+static void velapaw_meal_norm(const char *in, char *out, int outsz)
+{
+  int n = 0;
+
+  if (out == NULL || outsz <= 0)
+    {
+      return;
+    }
+
+  out[0] = '\0';
+
+  if (in == NULL)
+    {
+      return;
+    }
+
+  while (*in == ' ' || *in == '\t')
+    {
+      in++;
+    }
+
+  while (*in != '\0' && n < outsz - 1)
+    {
+      char c = *in++;
+
+      if (c >= 'A' && c <= 'Z')
+        {
+          c = (char)(c + ('a' - 'A'));
+        }
+
+      out[n++] = c;
+    }
+
+  /* Trim everything that is not a letter or digit off the tail. */
+
+  while (n > 0)
+    {
+      char c = out[n - 1];
+
+      if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))
+        {
+          break;
+        }
+
+      n--;
+    }
+
+  out[n] = '\0';
+}
+
+int velapaw_meal_set_by_name(const char *name, int slot, int minute)
+{
+  char want[VELAPAW_NAME_MAX];
+  char have[VELAPAW_NAME_MAX];
+  int  meal[VELAPAW_MAX_MEALS];
+  const struct velapaw_pet *p;
+  int found = -1;
+  int n;
+  int k;
+
+  if (slot < 0 || slot >= VELAPAW_MAX_MEALS)
+    {
+      return -1;
+    }
+
+  if (minute != -1 && (minute < 0 || minute > (23 * 60 + 59)))
+    {
+      return -1;
+    }
+
+  velapaw_meal_norm(name, want, (int)sizeof(want));
+
+  if (want[0] == '\0')
+    {
+      return -1;
+    }
+
+  n = velapaw_identity_count();
+
+  for (k = 0; k < n && k < VELAPAW_MAX_PETS; k++)
+    {
+      p = velapaw_identity_get((velapaw_pet_id_t)k);
+
+      if (p == NULL)
+        {
+          continue;
+        }
+
+      velapaw_meal_norm(p->name, have, (int)sizeof(have));
+
+      if (strcmp(have, want) != 0)
+        {
+          continue;
+        }
+
+      if (found >= 0)
+        {
+          return -3;              /* two pets answer to the same name */
+        }
+
+      found = k;
+    }
+
+  if (found < 0)
+    {
+      return -2;
+    }
+
+  p = velapaw_identity_get((velapaw_pet_id_t)found);
+
+  if (p == NULL)
+    {
+      return -2;
+    }
+
+  /* Copy all three slots.  velapaw_identity_update() writes every slot of the
+   * array it is handed, so a partial array would silently switch the other
+   * two meals off.
+   */
+
+  for (k = 0; k < VELAPAW_MAX_MEALS; k++)
+    {
+      meal[k] = p->meal_min[k];
+    }
+
+  meal[slot] = minute;
+
+  /* 0 for portion and limit means "leave alone": update() assigns those only
+   * when the value is > 0.
+   */
+
+  if (velapaw_identity_update((velapaw_pet_id_t)found, 0, 0, meal) < 0)
+    {
+      return -4;
+    }
+
+  /* Bump even if the flash write fails: RAM already holds the new time and RAM
+   * is what the feeder schedules from, so the screen must follow it.  Bumped
+   * after the save so the UI's redraw does not overlap the flash erase.
+   */
+
+  int rc = velapaw_identity_save();
+
+  /* The agent reads meal times back from status.md, not from RAM.  Rewrite it
+   * before returning, so the very next read in this turn or the next one sees
+   * the new time instead of the boot-time copy.
+   */
+
+  velapaw_store_status_refresh();
+  g_ident_gen++;
+  return rc;
 }
 
 int velapaw_identity_update(velapaw_pet_id_t id, int portion_g,

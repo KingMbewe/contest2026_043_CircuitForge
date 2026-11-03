@@ -3,8 +3,10 @@
 #
 # Registers the app with the NuttX apps build.  Two layouts are in play:
 #
-#   apps/packages/demos/contest2026_043_velapaw  - emulator / CMake tree
-#   apps/examples/velapaw                        - the real ESP32-S3 board
+#   apps/packages/demos/contest2026_043_velapaw  - a fresh repo sync, as in
+#                                                  README section 7, and the
+#                                                  emulator / CMake tree
+#   apps/examples/velapaw                        - the team's own board tree
 #
 # Registering a directory that does not exist silently drops the app from
 # CONFIGURED_APPS: `make` then skips it entirely and links against whatever

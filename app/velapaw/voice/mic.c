@@ -2368,3 +2368,122 @@ bool velapaw_mic_speech_present(const int16_t *audio, size_t nsamples)
 
   return loud >= MIC_SPEECH_SEGS;
 }
+
+/* ===== ES8311 register dump -- "velapaw codec" =============================
+ * The codec is on I2C0 at 0x18 (esp32s3_bringup.c: ES8311_I2C_ADDR/_FREQ).
+ * FLAT build, so the arch bus accessor is reachable with a hand-written
+ * extern -- the same trick tool_meal.c uses for velapaw_meal_set_by_name.
+ * Nothing in nuttx/boards or the kernel config is touched by this.
+ *
+ * Why the whole map and not a chosen few: TX runs 19/19 through this chip
+ * while RX delivers zero bytes, so the DAC-side registers are a working
+ * control for the ADC-side ones.  Dump everything and let the comparison
+ * pick the registers instead of pre-judging the bit meanings.
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+#include <nuttx/i2c/i2c_master.h>
+
+#define VP_ES_ADDR  0x18
+#define VP_ES_FREQ  100000
+
+extern struct i2c_master_s *esp32s3_i2cbus_initialize(int port);
+
+static int vp_es_rd(struct i2c_master_s *i2c, uint8_t reg, uint8_t *val)
+{
+  struct i2c_msg_s m[2];
+
+  m[0].frequency = VP_ES_FREQ;
+  m[0].addr      = VP_ES_ADDR;
+  m[0].flags     = 0;
+  m[0].buffer    = &reg;
+  m[0].length    = 1;
+
+  m[1].frequency = VP_ES_FREQ;
+  m[1].addr      = VP_ES_ADDR;
+  m[1].flags     = I2C_M_READ;
+  m[1].buffer    = val;
+  m[1].length    = 1;
+
+  return I2C_TRANSFER(i2c, m, 2);
+}
+
+static int vp_es_wr(struct i2c_master_s *i2c, uint8_t reg, uint8_t val)
+{
+  struct i2c_msg_s m;
+  uint8_t b[2];
+
+  b[0] = reg;
+  b[1] = val;
+  m.frequency = VP_ES_FREQ;
+  m.addr      = VP_ES_ADDR;
+  m.flags     = 0;
+  m.buffer    = b;
+  m.length    = 2;
+
+  return I2C_TRANSFER(i2c, &m, 1);
+}
+
+int velapaw_codec_dump(int argc, char *argv[])
+{
+  struct i2c_master_s *i2c;
+  uint8_t v = 0xff;
+  int ret;
+  int r;
+
+  i2c = esp32s3_i2cbus_initialize(0);
+  if (i2c == NULL)
+    {
+      printf("[codec] esp32s3_i2cbus_initialize(0) failed\n");
+      return 1;
+    }
+
+  /* "velapaw codec set <reg> <val>", both hex without 0x.  This is what
+   * makes the 0x44 loopback probe free -- no second build.
+   */
+
+  if (argc > 4 && strcmp(argv[2], "set") == 0)
+    {
+      unsigned long reg = strtoul(argv[3], NULL, 16);
+      unsigned long val = strtoul(argv[4], NULL, 16);
+
+      ret = vp_es_wr(i2c, (uint8_t)reg, (uint8_t)val);
+      printf("[codec] write 0x%02lx = 0x%02lx ret=%d\n", reg, val, ret);
+      return ret < 0 ? 1 : 0;
+    }
+
+  printf("[codec] --- ES8311 @ I2C0 0x%02x ---\n", VP_ES_ADDR);
+
+  ret = vp_es_rd(i2c, 0xfd, &v);
+  printf("[codec] id  0xfd=0x%02x ret=%d (expect 0x83)\n", v, ret);
+  ret = vp_es_rd(i2c, 0xfe, &v);
+  printf("[codec] id  0xfe=0x%02x ret=%d (expect 0x11)\n", v, ret);
+  ret = vp_es_rd(i2c, 0xff, &v);
+  printf("[codec] ver 0xff=0x%02x ret=%d\n", v, ret);
+
+  for (r = 0x00; r <= 0x48; r += 8)
+    {
+      uint8_t row[8];
+      int bad = 0;
+      int j;
+
+      for (j = 0; j < 8; j++)
+        {
+          row[j] = 0xff;
+          if (vp_es_rd(i2c, (uint8_t)(r + j), &row[j]) < 0)
+            {
+              bad++;
+            }
+        }
+
+      printf("[codec] %02x: %02x %02x %02x %02x %02x %02x %02x %02x%s\n",
+             r, row[0], row[1], row[2], row[3],
+             row[4], row[5], row[6], row[7],
+             bad ? "  <-- read errors" : "");
+    }
+
+  return 0;
+}

@@ -38,22 +38,41 @@ are silently cut mid-string and leave a corrupt file; and verify by comparing
 
 ## 2. Framework patches (`patches/`)
 
-Against `packages/ai_agent` at commit **`41723c6`**. The three patches touch
-**disjoint file sets**, so each applies independently and in any order.
+Against `packages/ai_agent` at commit **`41723c6`**. Upstream has rewritten
+that branch since, so a fresh `repo sync` lacks the commit: step 1b of
+[README §7](../README.md#7-build--run-real-hardware) fetches it and checks it
+out.
+
+Apply them **in order, one at a time**. `0001`–`0003` touch disjoint file
+sets, but `0004` edits `agent_loop.c`, `nsh_commands.c` and `tool_registry.c`
+after `0002` and `0003` have. A dry run of all four at once
+(`git apply --check *.patch`) checks each one against the unpatched tree, so
+it rejects `0004`.
 
 | Patch | Files | What it fixes |
 |---|---|---|
 | `0001-platform-bringup.patch` | 6 | Makes the agent run at all on a 16 MB ESP32-S3: PSRAM-stack freeze, the heap walk that kills a freshly-booted board, LLM/socket timeouts (420 s / 480 s), task stacks |
 | `0002-request-size-and-transport.patch` | 4 | Makes it fast and reliable: excludes 20 tools irrelevant to a feeder (schemas were 9 946 B of a 19 391 B request, against a ~7 840 B usable IOB budget), plus HTTP retry and transport handling |
 | `0003-agent-correctness.patch` | 8 | Makes the answers *right*: heartbeat session replay, the `list_dir` prefix and local-tool-shortcut defects, the stale-history freshness directive, `ask` truncating at 7 words, and the natural-language fast paths left dispatching to tools `0002` removed |
+| `0004-meal-scheduling-and-lcd.patch` | 7 | The finals features: the `set_meal_schedule` tool (new `tool_meal.c`/`.h`), so one `ask` sentence changes a pet's meal time; every agent turn mirrored on the LCD; `ask` line editing, since arrow keys and backspace reached the agent as raw bytes; message text kept valid UTF-8, because DeepSeek rejects a whole request with HTTP 400 over one malformed sequence (here caused by a use-after-free in the new tool); and two shortcut fixes: "what time does bob eat?" was answered with the clock, and a read of `/data/ai_agent/velapaw/` ended the turn as a raw dump |
 
 Applying them:
 
 ```bash
 cd <openvela-workspace>/packages/ai_agent
-git apply --check ../../contest2026_043_CircuitForge/agent/patches/*.patch  # dry run
-git apply         ../../contest2026_043_CircuitForge/agent/patches/*.patch
+P=../../contest2026_043_CircuitForge/agent/patches
+for p in $P/*.patch; do               # the glob sorts: 0001, 0002, 0003, 0004
+  git apply --check "$p" && git apply "$p" || { echo "STOP at $p"; break; }
+done
 ```
+
+`0004` calls two functions that the VelaPaw app defines:
+`velapaw_meal_set_by_name()` in
+[`app/velapaw/identity/identity.c`](../app/velapaw/identity/identity.c) and
+`velapaw_agent_event()` in [`app/velapaw/ui/ui_lvgl.c`](../app/velapaw/ui/ui_lvgl.c).
+They are plain externs, resolved because the agent and the app link into one
+flat image, so `0004` links only with the app in this repository. The
+preliminary-round app has neither function.
 
 Then force a rebuild of the C files — **header-only edits do not recompile
 dependents in this tree**, which will silently give you a stale image:
@@ -90,7 +109,9 @@ md5sum nuttx/nuttx.bin        # image size is NOT a usable identifier
 
 At runtime, on the console:
 
-- `[tools] Tools JSON built (16 builtin + 0 providers)` — the tool cut is in.
+- `[tools] Tools JSON built (17 builtin + 0 providers)` — the tool cut is in,
+  plus `0004`'s `set_meal_schedule` (with `0001`–`0003` only, it reads 16).
+  `[tools] Registered tool: set_meal_schedule` appears in the list above it.
 
 If you ever change the `s_excluded_tools[]` denylist in `0002`, re-run this
 grep and require it to come back **empty** — cutting a tool leaves callers

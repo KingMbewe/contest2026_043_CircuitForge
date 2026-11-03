@@ -73,6 +73,27 @@ int  velapaw_identity_save_icons(void);
  * load() is called automatically by velapaw_identity_init(); call save() after
  * enrolling (or after editing a pet). Returns <0 on failure / no saved data. */
 int velapaw_identity_save(void);
+
+/* Set ONE meal slot for a pet looked up BY NAME.  The agent and the voice
+ * dialog both speak names, never ids, and ids are array indices that renumber
+ * on delete -- so a name lookup is the only stable handle either of them has.
+ *
+ * Matching folds case, leading/trailing whitespace and trailing punctuation,
+ * because names reach flash verbatim from the on-screen keyboard: the board
+ * currently holds "bob," and "bob" must still match it.
+ *
+ * `slot` is 0-based; `minute` is minute-of-day, or -1 to switch the slot off.
+ * The other two slots and the pet's portion, limit and embedding are left
+ * untouched.  Persists on success.
+ *
+ * Returns 0 on success, -1 bad arguments, -2 no such pet, -3 the name is
+ * ambiguous (two pets match), -4 the update was rejected, or the negative
+ * rc from velapaw_identity_save(). */
+int velapaw_meal_set_by_name(const char *name, int slot, int minute);
 int velapaw_identity_load(void);
+
+/* Changes whenever velapaw_meal_set_by_name() rewrites a pet.  That call runs
+ * on the ai_agent thread, so the UI polls this to know My Pets is stale. */
+unsigned velapaw_identity_gen(void);
 
 #endif /* VELAPAW_IDENTITY_H */

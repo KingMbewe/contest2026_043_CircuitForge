@@ -1,0 +1,529 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index f1b6b4a..7a76d20 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -45,6 +45,7 @@ if(CONFIG_EXAMPLES_AI_AGENT_VELA)
+     src/tools/tool_get_time.c
+     src/tools/tool_web_search.c
+     src/tools/tool_cron.c
++    src/tools/tool_meal.c
+     src/tools/tool_fetch_url.c
+     src/tools/tool_feishu_doc.c
+     src/tools/tool_feishu_chat.c
+diff --git a/Makefile b/Makefile
+index 1dfc116..a46b7cc 100644
+--- a/Makefile
++++ b/Makefile
+@@ -65,6 +65,7 @@ CSRCS += src/tools/tool_files.c
+ CSRCS += src/tools/tool_get_time.c
+ CSRCS += src/tools/tool_web_search.c
+ CSRCS += src/tools/tool_cron.c
++CSRCS += src/tools/tool_meal.c
+ CSRCS += src/tools/tool_fetch_url.c
+ CSRCS += src/tools/tool_feishu_doc.c
+ CSRCS += src/tools/tool_feishu_chat.c
+diff --git a/src/channels/nsh_commands.c b/src/channels/nsh_commands.c
+index f15ec61..bb0c91a 100644
+--- a/src/channels/nsh_commands.c
++++ b/src/channels/nsh_commands.c
+@@ -596,6 +596,49 @@ static void cmd_ask(int argc, char** argv)
+             strncat(content, " ", sizeof(content) - strlen(content) - 1);
+     }
+ 
++    /* velapaw: fgets() hands over terminal editing as raw bytes -- arrow keys
++     * as ESC [ D / ESC O D, backspace as 0x08 or 0x7f -- so a line corrected
++     * on screen reached the model as something else.  On 2026-10-13 a line
++     * that showed "set bob's dinner to 18:50" arrived as 31 bytes; the model
++     * answered "Done ... 18:50" without ever calling set_meal_schedule.
++     * Apply the erases, drop escape sequences and other control bytes.
++     * Bytes >= 0x80 pass, so Chinese input is untouched. */
++    size_t w = 0;
++    for (size_t r = 0; content[r] != '\0'; r++) {
++        unsigned char c = (unsigned char)content[r];
++        if (c == 0x1b) {
++            if (content[r + 1] == '[' || content[r + 1] == 'O') {
++                r += 2;                         /* skip to the final byte */
++                while (content[r] != '\0' &&
++                       ((unsigned char)content[r] < 0x40 ||
++                        (unsigned char)content[r] > 0x7e))
++                    r++;
++                if (content[r] == '\0')
++                    break;
++            } else if (content[r + 1] != '\0') {
++                r++;                            /* two-byte ESC x */
++            }
++            continue;
++        }
++        if (c == 0x08 || c == 0x7f) {
++            /* erase one character: a whole UTF-8 sequence, not one byte */
++            while (w > 0 && ((unsigned char)content[w - 1] & 0xc0) == 0x80)
++                w--;
++            if (w > 0)
++                w--;
++            continue;
++        }
++        if (c < 0x20)
++            continue;
++        content[w++] = (char)c;
++    }
++    content[w] = '\0';
++
++    if (w == 0) {
++        printf("Usage: ask <message>\n");
++        return;
++    }
++
+     agent_msg_t msg = { 0 };
+     strncpy(msg.channel, "cli", sizeof(msg.channel) - 1);
+     strncpy(msg.chat_id, "console", sizeof(msg.chat_id) - 1);
+diff --git a/src/core/agent_loop.c b/src/core/agent_loop.c
+index 91fc7b1..eb6065c 100644
+--- a/src/core/agent_loop.c
++++ b/src/core/agent_loop.c
+@@ -48,6 +48,15 @@
+ 
+ static const char* TAG = "agent";
+ 
++/* VelaPaw: mirror every turn onto the feeder's LCD
++ * (apps/examples/velapaw/ui/ui_lvgl.c).  Declared by hand like
++ * velapaw_meal_set_by_name in tool_meal.c: same FLAT image, so the symbol
++ * resolves at link time.  It only copies the text -- the caller keeps
++ * ownership.  kind: 0 = turn started, 1 = reply, 2 = failed,
++ * 3 = tools ran but the confirming LLM call timed out. */
++extern void velapaw_agent_event(const char* chat_id, const char* text,
++    int kind);
++
+ #define TOOL_OUTPUT_SIZE (8 * 1024)
+ #define TOOL_OUTPUT_SIZE_LARGE (16 * 1024)
+ #define TOOL_OUTPUT_SIZE_MIN (2 * 1024)
+@@ -98,20 +107,101 @@ static agent_mem_pool_t s_tool_pool;
+ static bool s_pool_ready = false;
+ 
+ /* Build OpenAI-format assistant message with tool_calls at the top level */
++/* DeepSeek rejects the ENTIRE request with
++ *   HTTP 400 ... messages[N].content: invalid unicode code point
++ * when any message content holds a malformed UTF-8 sequence.  Text cut at a
++ * byte boundary mid-character does exactly that, and because the cut text is
++ * kept in history it poisons every later turn too.  It hurts most right after
++ * a SUCCESSFUL mutating tool call: the write is already on flash, so the owner
++ * is told "Sorry, I encountered an error" about an action that worked
++ * (velapaw set_meal_schedule, 2026-10-11).
++ *
++ * Returns the length of the longest well-formed UTF-8 prefix of s.  Reading
++ * p[i + k] can never run past the terminator: a NUL fails the continuation
++ * test and stops the scan.
++ */
++
++static size_t utf8_valid_prefix(const char* s)
++{
++    const unsigned char* p = (const unsigned char*)s;
++    size_t i = 0;
++
++    while (p[i]) {
++        unsigned char c = p[i];
++        int need;
++
++        if (c < 0x80) {
++            i++;
++            continue;
++        } else if ((c & 0xE0) == 0xC0) {
++            need = 1;
++        } else if ((c & 0xF0) == 0xE0) {
++            need = 2;
++        } else if ((c & 0xF8) == 0xF0) {
++            need = 3;
++        } else {
++            break;      /* stray continuation byte, or 0xF8..0xFF */
++        }
++
++        for (int k = 1; k <= need; k++) {
++            if ((p[i + k] & 0xC0) != 0x80) {
++                return i;
++            }
++        }
++        i += need + 1;
++    }
++
++    return i;
++}
++
++/* Attach a string that is guaranteed to be well-formed UTF-8.  The common
++ * case costs nothing: a clean string is handed straight to cJSON with no
++ * copy.  Only a malformed one is duplicated and truncated. */
++
++static void add_clean_string(cJSON* obj, const char* key, const char* val)
++{
++    if (val == NULL) {
++        cJSON_AddNullToObject(obj, key);
++        return;
++    }
++
++    size_t full = strlen(val);
++    size_t valid = utf8_valid_prefix(val);
++
++    if (valid == full) {
++        cJSON_AddStringToObject(obj, key, val);
++        return;
++    }
++
++    syslog(LOG_WARNING,
++        "[%s] UTF-8: trimmed %d of %d byte(s) from \"%s\"\n",
++        TAG, (int)(full - valid), (int)full, key);
++
++    char* tmp = malloc(valid + 1);
++    if (tmp) {
++        memcpy(tmp, val, valid);
++        tmp[valid] = '\0';
++        cJSON_AddStringToObject(obj, key, tmp);
++        free(tmp);
++    } else {
++        cJSON_AddStringToObject(obj, key, "");
++    }
++}
++
+ static void add_assistant_message(cJSON* messages, const llm_response_t* resp)
+ {
+     cJSON* asst_msg = cJSON_CreateObject();
+     cJSON_AddStringToObject(asst_msg, "role", "assistant");
+ 
+     if (resp->text && resp->text_len > 0) {
+-        cJSON_AddStringToObject(asst_msg, "content", resp->text);
++        add_clean_string(asst_msg, "content", resp->text);
+     } else {
+         cJSON_AddNullToObject(asst_msg, "content");
+     }
+ 
+     /* Kimi thinking mode: echo back reasoning_content or the API returns 400 */
+     if (resp->reasoning_content && resp->reasoning_content[0]) {
+-        cJSON_AddStringToObject(asst_msg, "reasoning_content",
++        add_clean_string(asst_msg, "reasoning_content",
+             resp->reasoning_content);
+     }
+ 
+@@ -216,7 +306,7 @@ static void add_tool_result_messages(cJSON* messages,
+         cJSON* result_msg = cJSON_CreateObject();
+         cJSON_AddStringToObject(result_msg, "role", "tool");
+         cJSON_AddStringToObject(result_msg, "tool_call_id", call->id);
+-        cJSON_AddStringToObject(result_msg, "content", tool_output);
++        add_clean_string(result_msg, "content", tool_output);
+         cJSON_AddItemToArray(messages, result_msg);
+         return;
+     }
+@@ -294,7 +384,7 @@ static void add_tool_result_messages(cJSON* messages,
+             cJSON_AddStringToObject(result_msg, "role", "tool");
+             cJSON_AddStringToObject(result_msg, "tool_call_id",
+                 resp->calls[i].id);
+-            cJSON_AddStringToObject(result_msg, "content",
++            add_clean_string(result_msg, "content",
+                 (tasks[i].output && tasks[i].output[0])
+                     ? tasks[i].output
+                     : "{}");
+@@ -351,6 +441,23 @@ static const nl_intent_t s_intents[] = {
+ 
+ static char* handle_nl_fast_path(const char* text)
+ {
++    /* VelaPaw: a feeding question must never be answered by the fast path.
++     * kw_time matches a bare "what time", so "what time does bob eat?" would
++     * otherwise be answered with the wall clock instead of the schedule.
++     * Anything about feeding goes to the LLM, which has set_meal_schedule and
++     * can read status.md.
++     */
++
++    static const char* kw_velapaw[] = {
++        "meal", "feed", "feeding", "breakfast", "lunch", "dinner",
++        "schedule", "bowl", "pet",
++        "\u5582", "\u9910", "\u65e9\u9910", "\u5348\u9910", "\u6668\u9910",
++        "\u5ba0\u7269", NULL };
++
++    if (contains_any(text, kw_velapaw)) {
++        return NULL;
++    }
++
+     /* Table-driven: scan intents, first match wins */
+     for (int i = 0; s_intents[i].keywords; i++) {
+         if (contains_any(text, s_intents[i].keywords)) {
+@@ -786,6 +893,16 @@ static char* force_finish_reply(const char* system_prompt,
+ static void dispatch_response(const agent_msg_t* msg,
+     char* final_text)
+ {
++    /* Before any push: once queued, the dispatcher may free final_text. */
++    int lcd_kind = 1;
++    if (!final_text || !final_text[0]
++        || strcmp(final_text, LLM_TIMEOUT_MSG) == 0) {
++        lcd_kind = 2;
++    } else if (strcmp(final_text, LLM_TIMEOUT_TASK_COMPLETE_MSG) == 0) {
++        lcd_kind = 3;
++    }
++    velapaw_agent_event(msg->chat_id, final_text, lcd_kind);
++
+     if (final_text && final_text[0]) {
+         session_append(msg->chat_id, "user", msg->content);
+         session_append(msg->chat_id, "assistant", final_text);
+@@ -1264,7 +1381,19 @@ static char* run_react_loop(const char* sys_prompt, cJSON* messages,
+                                     AGENT_SKILLS_DIR,
+                                     strlen(AGENT_SKILLS_DIR)) == 0
+                                 || strcmp(path_obj->valuestring,
+-                                    AGENT_HEARTBEAT_FILE) == 0)) {
++                                    AGENT_HEARTBEAT_FILE) == 0
++                                /* velapaw: /data/ai_agent/velapaw/ holds
++                                 * status.md, feed_log.md and history.bin.
++                                 * All three are DATA to reason over, never a
++                                 * finished answer.  set_meal_schedule needs
++                                 * two rounds -- read the enrolled names and
++                                 * current times, then write one slot -- and
++                                 * the shortcut ended the turn after the read,
++                                 * handing the owner a raw status dump while
++                                 * the meal went unset.  Same class of bug as
++                                 * list_dir above. */
++                                || strstr(path_obj->valuestring,
++                                    "/velapaw/") != NULL)) {
+                             is_instruction_read = true;
+                         }
+                         cJSON_Delete(input_obj);
+@@ -1493,6 +1622,8 @@ static void* agent_loop_task(void* arg)
+             continue;
+         }
+ 
++        velapaw_agent_event(msg.chat_id, msg.content, 0);
++
+         /* Slash commands — fast path, bypass LLM */
+         (void)0;  // DBGOFF: syslog(LOG_INFO, "[llmdbg-loop] tid=%p: before handle_slash_command\n", (void*)pthread_self());
+         char* reply = handle_slash_command(&msg);
+@@ -1522,6 +1653,7 @@ static void* agent_loop_task(void* arg)
+         }
+ 
+         if (reply) {
++            velapaw_agent_event(msg.chat_id, reply, 1);
+             agent_msg_t out = { 0 };
+             strncpy(out.channel, msg.channel,
+                 sizeof(out.channel) - 1);
+diff --git a/src/tools/tool_meal.c b/src/tools/tool_meal.c
+new file mode 100644
+index 0000000..ee47724
+--- /dev/null
++++ b/src/tools/tool_meal.c
+@@ -0,0 +1,164 @@
++#include "tool_meal.h"
++#include "core/message_bus.h"
++#include "infra/cron_service.h"
++#include "agent_config.h"
++#include "cJSON.h"
++#include <errno.h>
++#include <string.h>
++#include <time.h>
++
++/* Implemented in apps/examples/velapaw/identity/identity.c.  Declared by hand
++ * rather than by including identity.h: that header pulls in velapaw.h and the
++ * app's whole include path, which this package does not have.  Same FLAT
++ * image, so the symbol resolves at link time.
++ *
++ * Returns 0, -1 bad args, -2 no such pet, -3 ambiguous name, -4 rejected,
++ * or a negative flash-save rc.
++ */
++
++extern int velapaw_meal_set_by_name(const char *name, int slot, int minute);
++
++static bool meal_is_off(const char *s)
++{
++  return s != NULL && (strcmp(s, "off")     == 0 ||
++                       strcmp(s, "OFF")     == 0 ||
++                       strcmp(s, "Off")     == 0 ||
++                       strcmp(s, "none")    == 0 ||
++                       strcmp(s, "disable") == 0 ||
++                       strcmp(s, "\u5173\u95ed") == 0 ||
++                       strcmp(s, "\u53d6\u6d88") == 0);
++}
++
++static const char *MEAL_USAGE =
++    "Error: missing or bad fields. You MUST provide: pet, slot, time. "
++    "slot is 1, 2 or 3 (1 = earliest meal). time is 24-hour \"HH:MM\", "
++    "or \"off\" to disable that meal. "
++    "Example: {\"pet\":\"bob\",\"slot\":1,\"time\":\"07:30\"}. "
++    "Read /data/ai_agent/velapaw/status.md first for the enrolled pet names "
++    "and their current meal times.";
++
++int tool_meal_set_execute(const char *input_json, char *output,
++                          size_t output_size)
++{
++  cJSON *root = cJSON_Parse(input_json);
++
++  if (!root) {
++      snprintf(output, output_size, "Error: invalid JSON input");
++      return ERROR;
++  }
++
++  /* Accept the three field names models actually emit for the pet. */
++  const char *pet = cJSON_GetStringValue(cJSON_GetObjectItem(root, "pet"));
++  if (!pet) pet = cJSON_GetStringValue(cJSON_GetObjectItem(root, "pet_name"));
++  if (!pet) pet = cJSON_GetStringValue(cJSON_GetObjectItem(root, "name"));
++
++  cJSON *jslot = cJSON_GetObjectItem(root, "slot");
++  if (!cJSON_IsNumber(jslot)) jslot = cJSON_GetObjectItem(root, "meal");
++
++  const char *tstr = cJSON_GetStringValue(cJSON_GetObjectItem(root, "time"));
++  cJSON *jhour = cJSON_GetObjectItem(root, "hour");
++  cJSON *jmin  = cJSON_GetObjectItem(root, "minute");
++
++  if (!pet || !cJSON_IsNumber(jslot)) {
++      snprintf(output, output_size, "%s", MEAL_USAGE);
++      cJSON_Delete(root);
++      return ERROR;
++  }
++
++  int slot = jslot->valueint;          /* owner-facing 1..3 */
++  int minute;
++
++  if (meal_is_off(tstr)) {
++      minute = -1;
++  }
++  else if (tstr != NULL) {
++      int hh = -1, mm = 0;
++      if (sscanf(tstr, "%d:%d", &hh, &mm) < 1 ||
++          hh < 0 || hh > 23 || mm < 0 || mm > 59) {
++          snprintf(output, output_size, "%s", MEAL_USAGE);
++          cJSON_Delete(root);
++          return ERROR;
++      }
++      minute = hh * 60 + mm;
++  }
++  else if (cJSON_IsNumber(jhour)) {
++      int hh = jhour->valueint;
++      int mm = cJSON_IsNumber(jmin) ? jmin->valueint : 0;
++      if (hh < 0 || hh > 23 || mm < 0 || mm > 59) {
++          snprintf(output, output_size, "%s", MEAL_USAGE);
++          cJSON_Delete(root);
++          return ERROR;
++      }
++      minute = hh * 60 + mm;
++  }
++  else {
++      snprintf(output, output_size, "%s", MEAL_USAGE);
++      cJSON_Delete(root);
++      return ERROR;
++  }
++
++  /* `pet` points INTO the cJSON tree, and every branch of the switch below
++   * formats it -- but the tree is freed before the switch runs.  Reading it
++   * after cJSON_Delete() is a use-after-free that put raw heap bytes into the
++   * tool result, which made DeepSeek reject the WHOLE request with
++   *   HTTP 400 ... messages[N].content: invalid unicode code point
++   * while the flash write had already succeeded, so a working action reported
++   * "Sorry, I encountered an error" (2026-10-11).  Copy the name first and
++   * repoint `pet` at the copy, so all six branches below are safe.
++   */
++
++  char petbuf[64];
++  strncpy(petbuf, pet, sizeof(petbuf) - 1);
++  petbuf[sizeof(petbuf) - 1] = '\0';
++  pet = petbuf;
++
++  int rc = velapaw_meal_set_by_name(pet, slot - 1, minute);
++  cJSON_Delete(root);
++
++  switch (rc) {
++    case 0:
++      if (minute < 0) {
++          snprintf(output, output_size,
++                   "Meal %d for %s is now off.", slot, pet);
++      }
++      else {
++          /* State the Model-B gate explicitly: without it the model tells the
++           * owner food appears at that time regardless, which is wrong. */
++          snprintf(output, output_size,
++                   "Meal %d for %s is set to %02d:%02d and saved to flash. "
++                   "The feeder dispenses it only when %s is recognised at the "
++                   "bowl at or after that time, once per day.",
++                   slot, pet, minute / 60, minute % 60, pet);
++      }
++      return OK;
++
++    case -1:
++      snprintf(output, output_size, "%s", MEAL_USAGE);
++      return ERROR;
++
++    case -2:
++      snprintf(output, output_size,
++               "Error: no enrolled pet matches \"%s\". Read "
++               "/data/ai_agent/velapaw/status.md for the enrolled names, then "
++               "retry with one of them.", pet);
++      return ERROR;
++
++    case -3:
++      snprintf(output, output_size,
++               "Error: more than one enrolled pet is called \"%s\". Ask the "
++               "owner which one they mean.", pet);
++      return ERROR;
++
++    case -4:
++      snprintf(output, output_size,
++               "Error: the feeder rejected the update for \"%s\".", pet);
++      return ERROR;
++
++    default:
++      snprintf(output, output_size,
++               "Warning: meal %d for %s was changed in memory but could NOT be "
++               "saved to flash (rc %d), so it will be lost on reboot. Tell the "
++               "owner.", slot, pet, rc);
++      return ERROR;
++  }
++}
+diff --git a/src/tools/tool_meal.h b/src/tools/tool_meal.h
+new file mode 100644
+index 0000000..f38c591
+--- /dev/null
++++ b/src/tools/tool_meal.h
+@@ -0,0 +1,18 @@
++/****************************************************************************
++ * tool_meal.h - VelaPaw scheduled-meal tool for the AI Agent
++ ****************************************************************************/
++
++#ifndef AI_AGENT_TOOL_MEAL_H
++#define AI_AGENT_TOOL_MEAL_H
++
++#include <stddef.h>
++
++/**
++ * Set ONE scheduled meal time for an enrolled pet.
++ * Input JSON: { pet, slot (1-3), time ("HH:MM" | "off") }
++ *             hour/minute are accepted instead of time.
++ */
++int tool_meal_set_execute(const char *input_json, char *output,
++                          size_t output_size);
++
++#endif /* AI_AGENT_TOOL_MEAL_H */
+diff --git a/src/tools/tool_registry.c b/src/tools/tool_registry.c
+index eb1376e..54220d7 100644
+--- a/src/tools/tool_registry.c
++++ b/src/tools/tool_registry.c
+@@ -28,6 +28,7 @@
+ #include "tools/tool_guard.h"
+ #include "tools/tool_control.h"
+ #include "tools/tool_cron.h"
++#include "tools/tool_meal.h"
+ #include "tools/tool_feishu_chat.h"
+ #include "tools/tool_feishu_doc.h"
+ #include "tools/tool_fetch_url.h"
+@@ -250,6 +251,23 @@ int tool_registry_init(void)
+         tool_get_time_execute);
+ 
+     /* File tools */
++    /* VelaPaw: writes one scheduled meal time. Reading them costs no tool --
++     * vp_status_write() publishes them in status.md, which read_file reaches.
++     */
++
++    REGISTER_TOOL("set_meal_schedule",
++        "Set one scheduled meal time for an enrolled pet. slot is 1, 2 or 3 "
++        "(1 = earliest). time is 24-hour \"HH:MM\", or \"off\" to disable it. "
++        "Read /data/ai_agent/velapaw/status.md first for pet names and their "
++        "current meal times. A meal changes ONLY when this tool returns "
++        "success: never tell the owner a time changed without calling it.",
++        TOOL_SCHEMA_BEGIN()
++            TOOL_PARAM_STR("pet", "Enrolled pet name") ","
++            TOOL_PARAM_NUM("slot", "Which meal: 1, 2 or 3") ","
++            TOOL_PARAM_STR("time", "Meal time as HH:MM, or off")
++            TOOL_SCHEMA_END_REQUIRED("\"pet\",\"slot\",\"time\""),
++        tool_meal_set_execute);
++
+     REGISTER_TOOL("read_file",
+         "Read a file. Path must start with " AGENT_DATA_DIR "/.",
+         TOOL_SCHEMA_BEGIN() TOOL_PARAM_STR("path", "Absolute file path")

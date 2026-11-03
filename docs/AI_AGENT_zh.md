@@ -160,7 +160,7 @@ END status=ok iters=3 tools=2 llm_ms=5260 elapsed=7s
 |---|---|
 | 自定义 Skill | [`agent/skills/velapaw-feeding-digest.md`](../agent/skills/velapaw-feeding-digest.md) → 板端 `/data/ai_agent/skills/` |
 | Heartbeat 任务 | [`agent/HEARTBEAT.md`](../agent/HEARTBEAT.md) → 板端 `/data/ai_agent/HEARTBEAT.md` |
-| 框架改动 | [`agent/patches/`](../agent/patches/) —— 针对 `packages/ai_agent` @ `41723c6` 的三个补丁 |
+| 框架改动 | [`agent/patches/`](../agent/patches/) —— 针对 `packages/ai_agent` @ `41723c6` 的四个补丁 |
 | 应用与验证方法 | [`agent/README.md`](../agent/README.md) |
 | 数据桥接 | VelaPaw `store` 模块 → `/data/ai_agent/velapaw/{status,feed_log}.md` |
 | 板级配置 | [`board/configs/`](../board/configs/) |

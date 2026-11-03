@@ -97,6 +97,21 @@ static const char *const g_strtab[S_COUNT][VP_LANG_N] =
   [S_UNDERWEIGHT]      = { "underweight", "瘦" },
   [S_OVERWEIGHT]       = { "overweight", "胖" },
 
+  /* ai_agent toast.  Every 中文 glyph here already appears in another row.
+   * S_AG_DONE has no 中文 on purpose ("完成" is not in the subset) and falls
+   * back to English. */
+  [S_AG_YOU_FMT]       = { "You: %s", "我: %s" },
+  [S_AG_WORKING_FMT]   = { "Agent working... %d s", "AI 进行中... %d 秒" },
+  [S_AG_CHECKING]      = { "Agent checking on the pets...", "AI 正在检查宠物..." },
+  [S_AG_HB_OK_FMT]     = { LV_SYMBOL_OK " Agent check %02d:%02d - all OK",
+                           LV_SYMBOL_OK " AI 检查 %02d:%02d - 正常" },
+  [S_AG_WARN_FMT]      = { LV_SYMBOL_WARNING " Agent %02d:%02d: %s",
+                           LV_SYMBOL_WARNING " AI %02d:%02d: %s" },
+  [S_AG_REPLY_FMT]     = { "Agent: %s", "AI: %s" },
+  [S_AG_FAILED]        = { LV_SYMBOL_WARNING " Agent: no reply - try again",
+                           LV_SYMBOL_WARNING " AI: 请重试" },
+  [S_AG_DONE]          = { LV_SYMBOL_OK " Agent: done (no confirmation)", NULL },
+
   /* my pets */
   [S_ENROLLED_PETS]    = { "Enrolled pets", "已录入的宠物" },
   [S_NO_PETS]          = { "No pets yet - enroll one", "还没有宠物 - 请先录入" },

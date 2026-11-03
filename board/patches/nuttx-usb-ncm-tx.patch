@@ -1,0 +1,594 @@
+diff --git a/arch/xtensa/src/esp32s3/esp32s3_otg_device.c b/arch/xtensa/src/esp32s3/esp32s3_otg_device.c
+index b08a22deb48..16ca77dcf67 100644
+--- a/arch/xtensa/src/esp32s3/esp32s3_otg_device.c
++++ b/arch/xtensa/src/esp32s3/esp32s3_otg_device.c
+@@ -61,19 +61,26 @@
+ 
+ /* Configuration ************************************************************/
+ 
+-/* USB hardware definition */
++/* USB hardware definition
++ *
++ * The ESP32-S3 OTG core has 256 words (1 KB) of FIFO RAM, of which
++ * ESP-IDF treats 200 words as usable.  The old value of 1280 bytes
++ * (320 words) placed the EP3/EP4 TxFIFOs past the end of that RAM, where
++ * they wrapped onto the RxFIFO: the CDC-NCM bulk IN data and the received
++ * packets (including their status words) overwrote each other.
++ */
+ 
+-#define ESP32S3_FIFO_SIZE       (1280)
++#define ESP32S3_FIFO_SIZE       (800)
+ #define ESP32S3_FIFO_WORDS      (ESP32S3_FIFO_SIZE >> 2)
+ 
+ /* EP0 + additional EP */
+ 
+ #define ESP32S3_ENDPOINT_NUM    (CONFIG_ESP32S3_OTG_ENDPOINT_NUM + 1)
+ 
+-/* There is 1.25Kb of FIFO memory.  The default partitions this memory
+- * so that there is a TxFIFO allocated for each endpoint and with more
+- * memory provided for the common RxFIFO.  A more knowledge-able
+- * configuration would not allocate any TxFIFO space to OUT endpoints.
++/* The default partitions the FIFO memory so that there is a TxFIFO
++ * allocated for each endpoint and with more memory provided for the
++ * common RxFIFO.  A more knowledge-able configuration would not allocate
++ * any TxFIFO space to OUT endpoints.
+  */
+ 
+ #define ESP32S3_TXFIFO_SIZE \
+@@ -655,6 +662,7 @@ static int esp32s3_ep_submit(struct usbdev_ep_s *ep,
+ 
+ /* Endpoint request cancellation */
+ 
++static void esp32s3_epin_abort(struct esp32s3_ep_s *privep);
+ static int esp32s3_ep_cancel(struct usbdev_ep_s *ep,
+                              struct usbdev_req_s *req);
+ 
+@@ -3074,17 +3082,18 @@ static inline void esp32s3_epin_interrupt(struct esp32s3_usbdev_s *priv)
+             }
+ #endif
+ 
+-          /* Endpoint disabled interrupt (ignored as this used only in polled
+-           * mode)
++          /* Endpoint disabled interrupt.  The disable is normally polled
++           * with interrupts off, but EPDM is unmasked in DIEPMSK: if a
++           * disable completes after esp32s3_epin_abort() stopped polling,
++           * an uncleared EPDISD would interrupt forever.
+            */
+-#if 0
++
+           if ((diepint & OTG_DIEPINT_EPDISD) != 0)
+             {
+               usbtrace(TRACE_INTDECODE(ESP32S3_TRACEINTID_EPIN_EPDISD),
+                        (uint16_t)diepint);
+               esp32s3_putreg(OTG_DIEPINT_EPDISD, ESP32S3_OTG_DIEPINT(epno));
+             }
+-#endif
+ 
+           /* Transmit FIFO empty */
+ 
+@@ -4556,6 +4565,111 @@ static int esp32s3_ep_submit(struct usbdev_ep_s *ep,
+   return ret;
+ }
+ 
++/****************************************************************************
++ * Name: esp32s3_epin_abort
++ *
++ * Description:
++ *   Abort the transfer in progress on a non-EP0 IN endpoint and return
++ *   every queued request with -ESHUTDOWN.  Unlike esp32s3_epin_disable(),
++ *   the endpoint stays configured (USBAEP) and the next EP_SUBMIT() starts
++ *   a new transfer.  The endpoint registers are logged (the first few
++ *   times) because a write request that never completes is otherwise
++ *   invisible.
++ *
++ ****************************************************************************/
++
++static void esp32s3_epin_abort(struct esp32s3_ep_s *privep)
++{
++  static int nlogged;
++  struct esp32s3_req_s *privreq;
++  uint8_t epphy = privep->epphy;
++  irqstate_t flags;
++  uint32_t diepctl;
++  uint32_t diepint;
++  uint32_t dieptsiz;
++  uint32_t dtxfsts;
++  uint32_t empmsk;
++  uint32_t daintmsk;
++  uint32_t dsts;
++  size_t xfrd;
++  size_t len;
++  bool active;
++  int timeout = 0;
++
++  flags = enter_critical_section();
++
++  /* Nothing to abort if the last request already completed */
++
++  privreq = esp32s3_rqpeek(privep);
++  if (privreq == NULL)
++    {
++      leave_critical_section(flags);
++      return;
++    }
++
++  /* Snapshot the endpoint state before changing it */
++
++  diepctl  = esp32s3_getreg(ESP32S3_OTG_DIEPCTL(epphy));
++  diepint  = esp32s3_getreg(ESP32S3_OTG_DIEPINT(epphy));
++  dieptsiz = esp32s3_getreg(ESP32S3_OTG_DIEPTSIZ(epphy));
++  dtxfsts  = esp32s3_getreg(ESP32S3_OTG_DTXFSTS(epphy)) & OTG_DTXFSTS_MASK;
++  empmsk   = esp32s3_getreg(ESP32S3_OTG_DIEPEMPMSK);
++  daintmsk = esp32s3_getreg(ESP32S3_OTG_DAINTMSK);
++  dsts     = esp32s3_getreg(ESP32S3_OTG_DSTS);
++  active   = privep->active;
++  xfrd     = privreq->req.xfrd;
++  len      = privreq->req.len;
++
++  /* NAK further IN tokens.  If a transfer is armed, also disable the
++   * endpoint and wait (bounded, interrupts are off) for the core to
++   * confirm.  A late EPDISD is cleared by esp32s3_epin_interrupt().
++   */
++
++  if ((diepctl & OTG_DIEPCTL_EPENA) != 0)
++    {
++      esp32s3_putreg(diepctl | OTG_DIEPCTL_EPDIS | OTG_DIEPCTL_SNAK,
++                     ESP32S3_OTG_DIEPCTL(epphy));
++
++      while ((esp32s3_getreg(ESP32S3_OTG_DIEPINT(epphy)) &
++              OTG_DIEPINT_EPDISD) == 0 && ++timeout < 1000)
++        {
++          up_udelay(1);
++        }
++    }
++  else
++    {
++      esp32s3_putreg(diepctl | OTG_DIEPCTL_SNAK,
++                     ESP32S3_OTG_DIEPCTL(epphy));
++    }
++
++  /* Drop whatever is left in the TxFIFO, stop waiting for it to drain and
++   * clear the stale interrupt flags.
++   */
++
++  esp32s3_txfifo_flush(OTG_GRSTCTL_TXFNUM_D(epphy));
++  esp32s3_putreg(empmsk & ~OTG_DIEPEMPMSK(epphy), ESP32S3_OTG_DIEPEMPMSK);
++  esp32s3_putreg(OTG_DIEPINT_XFRC | OTG_DIEPINT_EPDISD | OTG_DIEPINT_TOC |
++                 OTG_DIEPINT_ITTXFE | OTG_DIEPINT_INEPNE,
++                 ESP32S3_OTG_DIEPINT(epphy));
++
++  /* Nothing is in flight any more, so the next submit starts a transfer */
++
++  privep->active = false;
++  privep->zlp    = false;
++  esp32s3_req_cancel(privep, -ESHUTDOWN);
++  leave_critical_section(flags);
++
++  if (nlogged < 3)
++    {
++      nlogged++;
++      syslog(LOG_ERR, "otg: EP%d abort ctl=%08" PRIx32 " int=%" PRIx32
++             " tsiz=%08" PRIx32 " fifo=%" PRIu32 " emp=%" PRIx32
++             " msk=%" PRIx32 " dsts=%" PRIx32 " act=%d %zu/%zu t=%d\n",
++             epphy, diepctl, diepint, dieptsiz, dtxfsts, empmsk, daintmsk,
++             dsts, active, xfrd, len, timeout);
++    }
++}
++
+ /****************************************************************************
+  * Name: esp32s3_ep_cancel
+  *
+@@ -4580,6 +4694,18 @@ static int esp32s3_ep_cancel(struct usbdev_ep_s *ep,
+ 
+   usbtrace(TRACE_EPCANCEL, privep->epphy);
+ 
++  /* A non-EP0 IN endpoint may be part way through the request at the head
++   * of its queue.  Removing the requests alone leaves the endpoint marked
++   * active, so the next request would never start: abort the transfer in
++   * the hardware too.
++   */
++
++  if (privep->isin && privep->epphy != EP0)
++    {
++      esp32s3_epin_abort(privep);
++      return OK;
++    }
++
+   flags = enter_critical_section();
+ 
+   /* FIXME: if the request is the first, then we need to flush the EP
+diff --git a/drivers/usbdev/cdcncm.c b/drivers/usbdev/cdcncm.c
+index 9f7fa3bf9d7..5d40af0d640 100644
+--- a/drivers/usbdev/cdcncm.c
++++ b/drivers/usbdev/cdcncm.c
+@@ -35,8 +35,10 @@
+ #include <debug.h>
+ #include <errno.h>
+ #include <fcntl.h>
++#include <inttypes.h>
+ #include <stdbool.h>
+ #include <sys/poll.h>
++#include <syslog.h>
+ 
+ #include <nuttx/mutex.h>
+ #include <nuttx/kmalloc.h>
+@@ -84,6 +86,21 @@
+ #define NTB_OUT_SIZE                  16384
+ #define TX_MAX_NUM_DPE                32
+ 
++/* The write request buffer is used as two halves: the next NTB is built in
++ * one half while the other half is being sent, so a frame is never copied
++ * into a buffer the controller is still reading.  NTBs are therefore at
++ * most CDCNCM_TXHALF bytes, less than the host reads at a time.
++ */
++
++#define CDCNCM_TXHALF                 (NTB_OUT_SIZE / 2)
++
++/* How long the next NTB waits for the previous one to be sent before the
++ * previous one is cancelled.  A write request that never completes would
++ * otherwise block the work queue, and with it the receive path, for good.
++ */
++
++#define CDCNCM_TXWAIT                 MSEC2TICK(2000)
++
+ /* NCM Transfer Block Parameter Structure */
+ 
+ #define CDC_NCM_NTB16_SUPPORTED      (1 << 0)
+@@ -315,6 +332,7 @@ struct cdcncm_driver_s
+ 
+   FAR struct usbdev_req_s    *wrreq;       /* Single write request */
+   sem_t                       wrreq_idle;  /* Is the wrreq available? */
++  bool                        txbusy;      /* Is the wrreq queued? */
+   bool                        txdone;      /* Did a write request complete? */
+   enum ncm_notify_state_e     notify;      /* State of notify */
+   FAR const struct ndp_parser_opts_s
+@@ -322,6 +340,10 @@ struct cdcncm_driver_s
+   uint32_t                    ndpsign;     /* NDP signature */
+   int                         dgramcount;  /* The current tx cache dgram count */
+   FAR uint8_t                *dgramaddr;   /* The next tx cache dgram address */
++  FAR uint8_t                *txmem;       /* The wrreq's own buffer */
++  FAR uint8_t                *txstage;     /* Half the next NTB is built in */
++  mutex_t                     txlock;      /* Guards building and sending */
++  uint32_t                    ntbinsize;   /* Largest NTB the host accepts */
+   bool                        isncm;       /* true:NCM false:MBIM */
+ 
+   /* Network device */
+@@ -860,29 +882,29 @@ static void cdcncm_transmit_format(FAR struct cdcncm_driver_s *self,
+     {
+       /* Fill NCB */
+ 
+-      tmp = self->wrreq->buf;
++      tmp = self->txstage;
+       memset(tmp, 0, ncblen);
+       cdcncm_put(&tmp, 4, opts->nthsign);
+       cdcncm_put(&tmp, 2, opts->nthsize);
+       tmp += 2;              /* Skip seq */
+       tmp += opts->blocklen; /* Skip block len */
+       cdcncm_put(&tmp, opts->ndpindex, ndpindex);
+-      self->dgramaddr = self->wrreq->buf + ndpindex +
++      self->dgramaddr = self->txstage + ndpindex +
+                         opts->ndpsize + (TX_MAX_NUM_DPE + 1) * dgramidxlen;
+       self->dgramaddr = (FAR uint8_t *)NCM_ALIGN((uintptr_t)self->dgramaddr,
+                                                  div) + rem;
+ 
+       /* Fill NDP */
+ 
+-      tmp = self->wrreq->buf + ndpindex;
++      tmp = self->txstage + ndpindex;
+       cdcncm_put(&tmp, 4, self->ndpsign);
+       tmp += 2 + opts->reserved1;
+       cdcncm_put(&tmp, opts->nextndpindex, 0);
+     }
+ 
+-  tmp = self->wrreq->buf + ndpindex + opts->ndpsize +
++  tmp = self->txstage + ndpindex + opts->ndpsize +
+         self->dgramcount * dgramidxlen;
+-  cdcncm_put(&tmp, opts->dgramitemlen, self->dgramaddr - self->wrreq->buf);
++  cdcncm_put(&tmp, opts->dgramitemlen, self->dgramaddr - self->txstage);
+   cdcncm_put(&tmp, opts->dgramitemlen, dglen);
+ 
+   /* Fill IP packet */
+@@ -897,22 +919,27 @@ static void cdcncm_transmit_format(FAR struct cdcncm_driver_s *self,
+ }
+ 
+ /****************************************************************************
+- * Name: cdcncm_transmit_work
++ * Name: cdcncm_transmit_locked
+  *
+  * Description:
+- *   Send NTB to the USB device for ethernet frame transmission
++ *   Send the NTB built in txstage to the host.  If the previous NTB still
++ *   holds the write request after CDCNCM_TXWAIT, it is cancelled: a write
++ *   that never completes must not stop the network until a reboot.
+  *
+  * Input Parameters:
+- *   arg - Reference to the driver state structure
++ *   self - Reference to the driver state structure
+  *
+  * Returned Value:
+  *   None
+  *
++ * Assumptions:
++ *   The caller holds txlock.
++ *
+  ****************************************************************************/
+ 
+-static void cdcncm_transmit_work(FAR void *arg)
++static void cdcncm_transmit_locked(FAR struct cdcncm_driver_s *self)
+ {
+-  FAR struct cdcncm_driver_s *self = arg;
++  static int nlogged;
+   FAR const struct ndp_parser_opts_s *opts = self->parseropts;
+   FAR uint8_t *tmp;
+   const int dgramidxlen = 2 * opts->dgramitemlen;
+@@ -920,13 +947,43 @@ static void cdcncm_transmit_work(FAR void *arg)
+   int ncblen;
+   int ndpindex;
+   int totallen;
++  int ret;
++
++  /* Nothing to send, e.g. the delayed send after the NTB filled up */
++
++  if (self->dgramcount == 0)
++    {
++      return;
++    }
+ 
+   /* Wait until the USB device request for Ethernet frame transmissions
+    * becomes available.
+    */
+ 
+-  while (nxsem_wait(&self->wrreq_idle) != OK)
++  ret = nxsem_tickwait_uninterruptible(&self->wrreq_idle, CDCNCM_TXWAIT);
++  if (ret < 0)
+     {
++      /* Cancelling returns the request through cdcncm_wrcomplete() */
++
++      EP_CANCEL(self->epbulkin, self->wrreq);
++      ret = nxsem_tickwait_uninterruptible(&self->wrreq_idle,
++                                           MSEC2TICK(100));
++      if (nlogged < 3)
++        {
++          nlogged++;
++          syslog(LOG_ERR, "cdcncm: TX stalled, cancelled ret=%d busy=%d\n",
++                 ret, self->txbusy);
++        }
++
++      /* Never queue the request twice.  If it is not queued, the count was
++       * lost and sending without it puts the count right again.
++       */
++
++      if (ret < 0 && self->txbusy)
++        {
++          self->dgramcount = 0;
++          return;
++        }
+     }
+ 
+   ncblen   = opts->nthsize;
+@@ -934,13 +991,13 @@ static void cdcncm_transmit_work(FAR void *arg)
+ 
+   /* Fill NCB */
+ 
+-  tmp      = self->wrreq->buf + 8; /* Offset to block length */
+-  totallen = self->dgramaddr - self->wrreq->buf;
++  tmp      = self->txstage + 8; /* Offset to block length */
++  totallen = self->dgramaddr - self->txstage;
+   cdcncm_put(&tmp, opts->blocklen, totallen);
+ 
+   /* Fill NDP */
+ 
+-  tmp = self->wrreq->buf + ndpindex + 4; /* Offset to ndp length */
++  tmp = self->txstage + ndpindex + 4; /* Offset to ndp length */
+   cdcncm_put(&tmp, 2, opts->ndpsize + (self->dgramcount + 1) * dgramidxlen);
+ 
+   tmp += opts->reserved1 + opts->nextndpindex + opts->reserved2 +
+@@ -950,9 +1007,53 @@ static void cdcncm_transmit_work(FAR void *arg)
+   cdcncm_put(&tmp, opts->dgramitemlen, 0);
+   cdcncm_put(&tmp, opts->dgramitemlen, 0);
+ 
+-  self->wrreq->len = totallen;
++  /* Send this half and build the next NTB in the other one.  The NULL
++   * packet ends an NTB that is a multiple of the packet size, otherwise the
++   * host takes the next NTB for the rest of this one.
++   */
++
++  self->wrreq->buf   = self->txstage;
++  self->wrreq->len   = totallen;
++  self->wrreq->flags = USBDEV_REQFLAGS_NULLPKT;
++  self->txstage      = self->txstage == self->txmem ?
++                       self->txmem + CDCNCM_TXHALF : self->txmem;
++
++  self->txbusy = true;
++  ret = EP_SUBMIT(self->epbulkin, self->wrreq);
++  if (ret < 0)
++    {
++      self->txbusy = false;
++      nxsem_post(&self->wrreq_idle);
++
++      if (nlogged < 3)
++        {
++          nlogged++;
++          syslog(LOG_ERR, "cdcncm: TX submit failed: %d\n", ret);
++        }
++    }
++}
++
++/****************************************************************************
++ * Name: cdcncm_transmit_work
++ *
++ * Description:
++ *   Send NTB to the USB device for ethernet frame transmission
++ *
++ * Input Parameters:
++ *   arg - Reference to the driver state structure
++ *
++ * Returned Value:
++ *   None
++ *
++ ****************************************************************************/
++
++static void cdcncm_transmit_work(FAR void *arg)
++{
++  FAR struct cdcncm_driver_s *self = arg;
+ 
+-  EP_SUBMIT(self->epbulkin, self->wrreq);
++  nxmutex_lock(&self->txlock);
++  cdcncm_transmit_locked(self);
++  nxmutex_unlock(&self->txlock);
+ }
+ 
+ /****************************************************************************
+@@ -1158,6 +1259,8 @@ static void cdcncm_txdone(FAR struct cdcncm_driver_s *priv)
+ static void cdcncm_interrupt_work(FAR void *arg)
+ {
+   FAR struct cdcncm_driver_s *self = (FAR struct cdcncm_driver_s *)arg;
++  static int nlogged;
++  int ret;
+ 
+   /* Check if we received an incoming packet, if so, call cdcncm_receive() */
+ 
+@@ -1167,7 +1270,14 @@ static void cdcncm_interrupt_work(FAR void *arg)
+       netdev_lower_rxready(&self->dev);
+ 
+       self->rxpending = false;
+-      EP_SUBMIT(self->epbulkout, self->rdreq);
++      ret = EP_SUBMIT(self->epbulkout, self->rdreq);
++      if (ret < 0 && nlogged < 3)
++        {
++          /* Nothing more is received until the host resets the link */
++
++          nlogged++;
++          syslog(LOG_ERR, "cdcncm: RX submit failed: %d\n", ret);
++        }
+     }
+ 
+   /* Check if a packet transmission just completed.  If so, call
+@@ -1277,18 +1387,28 @@ static int cdcncm_ifdown(FAR struct netdev_lowerhalf_s *dev)
+ static int cdcncm_send(FAR struct netdev_lowerhalf_s *dev, FAR netpkt_t *pkt)
+ {
+   FAR struct cdcncm_driver_s *self;
++  bool full;
+ 
+   self = container_of(dev, struct cdcncm_driver_s, dev);
++
++  nxmutex_lock(&self->txlock);
+   cdcncm_transmit_format(self, pkt);
+   netpkt_free(dev, pkt, NETPKT_TX);
+ 
+-  if ((self->wrreq->buf + NTB_OUT_SIZE - self->dgramaddr <
+-       self->dev.netdev.d_pktsize) || self->dgramcount >= TX_MAX_NUM_DPE)
++  /* Send now if the next frame might not fit into the NTB */
++
++  full = (self->txstage + MIN(CDCNCM_TXHALF, self->ntbinsize) -
++          self->dgramaddr < self->dev.netdev.d_pktsize) ||
++         self->dgramcount >= TX_MAX_NUM_DPE;
++  if (full)
+     {
+       work_cancel(ETHWORK, &self->delaywork);
+-      cdcncm_transmit_work(self);
++      cdcncm_transmit_locked(self);
+     }
+-  else
++
++  nxmutex_unlock(&self->txlock);
++
++  if (!full)
+     {
+       work_queue(ETHWORK, &self->delaywork, cdcncm_transmit_work, self,
+                  MSEC2TICK(CDCNCM_DGRAM_COMBINE_PERIOD));
+@@ -1511,6 +1631,7 @@ static void cdcncm_wrcomplete(FAR struct usbdev_ep_s *ep,
+    * transmissions again.
+    */
+ 
++  self->txbusy = false;
+   rc = nxsem_post(&self->wrreq_idle);
+ 
+   if (rc != OK)
+@@ -1559,6 +1680,7 @@ static void cdcncm_resetconfig(FAR struct cdcncm_driver_s *self)
+   self->parseropts = &g_ndp16_opts;
+   self->ndpsign    = self->isncm ? self->parseropts->ndpsign :
+                                    CDC_MBIM_NDP16_NOCRC_SIGN;
++  self->ntbinsize  = NTB_DEFAULT_IN_SIZE;
+ }
+ 
+ /****************************************************************************
+@@ -2475,6 +2597,9 @@ static int cdcncm_bind(FAR struct usbdevclass_driver_s *driver,
+   dev->ep0->priv = self;
+ #endif
+ 
++  nxmutex_init(&self->txlock);
++  self->ntbinsize = NTB_DEFAULT_IN_SIZE;
++
+   /* Preallocate control request */
+ 
+   self->ctrlreq = usbdev_allocreq(dev->ep0, CDCECM_MXDESCLEN);
+@@ -2547,6 +2672,11 @@ static int cdcncm_bind(FAR struct usbdevclass_driver_s *driver,
+ 
+   self->wrreq->callback = cdcncm_wrcomplete;
+ 
++  /* NTBs are built in the two halves of its buffer in turn */
++
++  self->txmem   = self->wrreq->buf;
++  self->txstage = self->txmem;
++
+   /* The single write request just allocated is available now. */
+ 
+   ret = nxsem_init(&self->wrreq_idle, 0, 1);
+@@ -2641,6 +2771,15 @@ static void cdcncm_unbind(FAR struct usbdevclass_driver_s *driver,
+ 
+   if (self->wrreq != NULL)
+     {
++      /* Give the request back the buffer it was allocated with */
++
++      if (self->txmem != NULL)
++        {
++          self->wrreq->buf = self->txmem;
++          self->txmem      = NULL;
++          self->txstage    = NULL;
++        }
++
+       usbdev_freereq(self->epbulkin, self->wrreq);
+       self->wrreq = NULL;
+     }
+@@ -2656,6 +2795,7 @@ static void cdcncm_unbind(FAR struct usbdevclass_driver_s *driver,
+   /* Clear out all data in the rx_queue */
+ 
+   netpkt_free_queue(&self->rx_queue);
++  nxmutex_destroy(&self->txlock);
+ }
+ 
+ static int cdcncm_setup(FAR struct usbdevclass_driver_s *driver,
+@@ -2751,14 +2891,28 @@ static int cdcncm_setup(FAR struct usbdevclass_driver_s *driver,
+ 
+           case NCM_GET_NTB_INPUT_SIZE:
+             uinfo("NCM_GET_NTB_INPUT_SIZE len %d\n", len);
+-            ret = 0;
++            if (len >= 4)
++              {
++                FAR uint8_t *tmp = self->ctrlreq->buf;
++
++                cdcncm_put(&tmp, 4, self->ntbinsize);
++                ret = 4;
++              }
+             break;
+ 
+           case NCM_SET_NTB_INPUT_SIZE:
+-            if (len == 4 && value == 0)
++
++            /* The host gives the largest NTB it accepts (at least 2048
++             * bytes).  NTBs are kept within it.
++             */
++
++            if (len == 4 && value == 0 && dataout != NULL && outlen >= 4)
+               {
+-                uinfo("NCM_SET_NTB_INPUT_SIZE len %d NTB input size %d\n",
+-                      len, *(FAR int *)dataout);
++                uint32_t size = GETUINT32(dataout);
++
++                uinfo("NCM_SET_NTB_INPUT_SIZE len %d NTB input size %"
++                      PRIu32 "\n", len, size);
++                self->ntbinsize = MAX(MIN(size, NTB_DEFAULT_IN_SIZE), 2048);
+                 ret = 0;
+               }
+             break;

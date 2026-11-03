@@ -1,0 +1,24 @@
+diff --git a/libs/libc/audio/lib_buffer.c b/libs/libc/audio/lib_buffer.c
+index df6d7893fb0..f831eab0aa2 100644
+--- a/libs/libc/audio/lib_buffer.c
++++ b/libs/libc/audio/lib_buffer.c
+@@ -69,7 +69,18 @@ int apb_alloc(FAR struct audio_buf_desc_s *bufdesc)
+   /* Perform a user mode allocation */
+ 
+   apb  = lib_umalloc(sizeof(struct ap_buffer_s));
+-  samp = lib_umemalign(MAX(up_get_dcache_linesize(), 1), bufdesc->numbytes);
++  /* VELAPAW: the ESP32-S3 I2S RX GDMA writes straight into samp, which
++   * normally sits in PSRAM.  GDMA only completes a PSRAM write when the
++   * target is aligned to its external-memory block (16 B by default),
++   * but up_get_dcache_linesize() is 0 here (no CONFIG_ARCH_DCACHE), so
++   * this was a plain 8-byte-aligned malloc.  Whenever samp landed at
++   * 8 mod 16 the first RX descriptor never completed and the mic
++   * returned zero bytes for the whole boot.  64 covers every block
++   * size and keeps the buffer on whole 32-byte cache lines.
++   */
++
++  samp = lib_umemalign(MAX(up_get_dcache_linesize(), 64),
++                       bufdesc->numbytes);
+ 
+   *bufdesc->u.pbuffer = apb;
+ 

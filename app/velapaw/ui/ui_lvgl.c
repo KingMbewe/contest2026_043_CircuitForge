@@ -20,9 +20,12 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <pthread.h>
+#include <sched.h>
+#include <sys/ioctl.h>
 
 #include <lvgl/lvgl.h>
 
@@ -107,7 +110,7 @@ typedef enum { EV_NONE, EV_VIEW, EV_CAPTURE, EV_SAVE, EV_NEXTDAY,
 static volatile ui_event_t g_evt = EV_NONE;
 
 /* shared live frame */
-static uint16_t g_img565[VELAPAW_FRAME_W * VELAPAW_FRAME_H];
+static uint16_t *g_img565;
 static lv_image_dsc_t g_dsc;
 static lv_obj_t *g_img;      /* preview in Enroll tab */
 static lv_obj_t *g_img_r;    /* preview in Recognize tab */
@@ -128,7 +131,7 @@ static lv_obj_t *g_thumb[MAX_SHOTS];
  * look identical on screen and cost 40 KB -- freeing 120 KB of DRAM. */
 #define THUMB_W 64
 #define THUMB_H 64
-static uint16_t  g_thumb565[MAX_SHOTS][THUMB_W * THUMB_H];
+static uint16_t  (*g_thumb565)[THUMB_W * THUMB_H];
 static lv_image_dsc_t g_thumb_dsc[MAX_SHOTS];
 
 /* recognize widgets */
@@ -202,6 +205,9 @@ static int   g_enroll_paused;
 
 static int   g_edit_pet = -1;          /* pet being edited, -1 = dialog closed */
 static int   g_edit_meal[VELAPAW_MAX_MEALS];
+/* the pet's own times as of opening (or the agent's last change): a slot still
+ * equal to this is one the owner has not touched (see ident_poll) */
+static int   g_edit_orig[VELAPAW_MAX_MEALS];
 static lv_obj_t *g_edit_modal;
 static lv_obj_t *g_edit_title;
 static lv_obj_t *g_edit_meal_lbl;
@@ -373,12 +379,15 @@ static void show_frame(const struct velapaw_frame *f)
  * The board wedged (console "semaphore timeout") after a long idle on the
  * Enroll tab -- the preview grabs a frame every FRAME_INTERVAL_MS forever, so
  * minutes of idling = many thousands of captures, and the next Capture died.
- * Every capture goes through here so the log tells us the frame number at the
- * wedge: a repeatable count => something leaks per-capture; no pattern => it's
- * time/temperature/electrical. Do not guess this one again.
+ * Every capture goes through here and is counted.  The count used to be a
+ * console line every 200 grabs; it is now in the 10-minute health line (see
+ * health_fmt) with the slowest grab, the failures and the repeated frames, so
+ * health.log has the frame number at a wedge even when nobody was reading the
+ * console: a repeatable count => something leaks per-capture; no pattern =>
+ * it's time/temperature/electrical. Do not guess this one again.
  ****************************************************************************/
 
-static unsigned long g_cap_n;
+static volatile unsigned long g_cap_n;
 
 /* ---- background inference worker: shared state -----------------------------
  * Declared up here because BOTH the recognize loop and Enroll's Capture hand
@@ -405,6 +414,487 @@ static int                    g_cap_pending;/* an enroll capture is in flight */
  * board is a dead console with no backtrace.  Capture is deliberately OUTSIDE
  * the lock: the 2 s mic read must overlap with vision, not block it. */
 static pthread_mutex_t        g_tflm_lock = PTHREAD_MUTEX_INITIALIZER;
+
+/****************************************************************************
+ * staying up: console, health log, stall monitor
+ *
+ * The console is CDC-ACM with a 193-byte TX buffer.  When the host stops
+ * reading it -- PuTTY closed, the port lost, the PC asleep -- the buffer fills
+ * and the next blocking writer (the agent logs through syslog) waits inside
+ * the serial driver holding its TX lock.  Every later console write, on any
+ * thread, queues behind that lock.  The O_NONBLOCK set in velapaw_ui_run
+ * (which is what keeps a board with no PC at all running) does not help
+ * here: the lock is taken before the flag is looked at.  A board left running
+ * froze with nothing on screen to say why.  uprintf() asks the driver for the free
+ * space first (FIONSPACE takes only a spinlock) and drops the line when the
+ * buffer stays full.  It writes the fd directly: stdio's FILE lock is shared
+ * by every thread of the task, and a thread stuck in printf holds it.  Prints
+ * inside the feeder, TFLM and identity modules are not gated.
+ *
+ * What has to survive goes to flash instead: health.log in the velapaw data
+ * dir gets a line at boot, every 10 minutes and at a stall.
+ *
+ * The stall monitor resets the board when the UI loop has not come round for
+ * STALL_UI_MS (STALL_FEED_MS while the feeder motor turns: a 50 g portion is
+ * some 3400 steps), or the inference worker has been inside one request for
+ * STALL_INF_MS.  It does no I/O and takes no lock, so what wedged the others
+ * cannot wedge it; the note thread writes the STALL line and the monitor
+ * waits up to STALL_NOTE_MS for it.  Meals are marked fed before the motor
+ * turns (fed_save), so the reset cannot serve one twice.  A CPU stuck with
+ * interrupts off is not covered: this build has no hardware watchdog.
+ ****************************************************************************/
+
+#define CON_TRIES       5         /* FIONSPACE polls before a line is dropped */
+#define CON_RETRY_MS    10
+#define CON_CHUNK       96        /* longer lines go out in pieces */
+#define STALL_UI_MS     120000
+#define STALL_FEED_MS   600000
+#define STALL_INF_MS    60000     /* one embed takes ~1.3 s */
+#define STALL_NOTE_MS   3000
+#define HEALTH_MS       600000
+#define CAP_SLOW_MS     400
+
+extern void up_systemreset(void);
+extern int  esp32s3_reset_reasons(int cpu);    /* returns soc_reset_reason_t */
+
+static volatile unsigned long g_con_drop;      /* console lines dropped */
+static volatile long          g_ui_beat;       /* UI loop: last time round */
+static const char *volatile   g_ui_at = "init";/* ...and what it is doing */
+static const char             g_at_feed[] = "feed";  /* g_ui_at: motor running */
+static volatile uint32_t      g_ui_tab;
+static volatile long          g_inf_beat;      /* worker; 0 = never ran */
+static volatile unsigned long g_inf_n;         /* embeds finished */
+static volatile unsigned long g_rec_hit;       /* Recognize: pet handled */
+static volatile unsigned long g_rec_miss;      /* ...gave up, nobody known */
+static volatile long          g_cap_max;       /* slowest grab this period */
+static volatile unsigned long g_cap_slow;      /* grabs over CAP_SLOW_MS */
+static volatile unsigned long g_cap_same;      /* frame equal to the last */
+static volatile unsigned long g_cap_err;       /* the HAL said it failed */
+static volatile int           g_stall;         /* 1 UI, 2 worker */
+static volatile long          g_stall_age;     /* s since its last beat */
+static const char *volatile   g_stall_at;
+static volatile int           g_stall_noted;
+/* why this boot: 0x01 power-on or EN/RESET, 0x03 software (this monitor,
+ * nsh reboot), 0x07-0x09 watchdog, 0x15/0x16 USB (esptool) */
+static int                    g_boot_rr;
+/* 1 when the RTC came up below the clock floor: it lost the time (no
+ * battery on this board, so every unplug) and boot started a new day */
+static int                    g_clock_lost;
+
+/* Room for `need` bytes in the console TX buffer, waiting up to CON_TRIES x
+ * CON_RETRY_MS for the host to drain it.  1 when the driver cannot tell. */
+static int con_ok(int need)
+{
+#ifdef FIONSPACE
+  for (int i = 0; i < CON_TRIES; i++)
+    {
+      int room;
+
+      if (ioctl(STDOUT_FILENO, FIONSPACE, (unsigned long)(uintptr_t)&room) < 0
+          || room >= need)
+        {
+          return 1;
+        }
+
+      usleep(CON_RETRY_MS * 1000);
+    }
+
+  return 0;
+#else
+  (void)need;
+  return 1;
+#endif
+}
+
+/* printf for the console that drops the line rather than block. */
+static void uprintf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+static void uprintf(const char *fmt, ...)
+{
+  char line[200];
+  va_list ap;
+  int n;
+  int off = 0;
+
+  va_start(ap, fmt);
+  n = vsnprintf(line, sizeof(line), fmt, ap);
+  va_end(ap);
+  if (n > (int)sizeof(line) - 1)
+    {
+      n = sizeof(line) - 1;
+    }
+
+  while (off < n)
+    {
+      int len = n - off < CON_CHUNK ? n - off : CON_CHUNK;
+      ssize_t w;
+
+      if (!con_ok(len))
+        {
+          g_con_drop++;
+          return;
+        }
+
+      w = write(STDOUT_FILENO, line + off, len);
+      if (w <= 0)
+        {
+          return;
+        }
+
+      off += w;
+    }
+}
+
+/* Wall time, uptime, tab; camera grabs, slowest this period, slow, repeated,
+ * failed; embeds, pets handled, gave up, worker state; console lines dropped.
+ * No heap figure: LVGL allocates from the system heap here (CLIB malloc, so
+ * lv_mem_monitor() reports nothing), and walking that heap is what free and
+ * mallinfo do -- they hang this board. */
+static void health_fmt(char *buf, size_t size)
+{
+  int m = wall_min();
+
+  snprintf(buf, size,
+           "%02d:%02d up %ldm tab %lu cap %lu max %ldms slow %lu same %lu "
+           "err %lu embed %lu hit %lu miss %lu inf %d drop %lu",
+           m / 60, m % 60, mono_ms() / 60000, (unsigned long)g_ui_tab,
+           g_cap_n, g_cap_max, g_cap_slow, g_cap_same, g_cap_err,
+           g_inf_n, g_rec_hit, g_rec_miss, g_inf_state, g_con_drop);
+}
+
+/* Flash first: the console may be what is stuck. */
+static void health_note(const char *line)
+{
+  velapaw_store_log_health(line);
+  uprintf("velapaw/health: %s\n", line);
+}
+
+static void *stall_monitor(void *arg)
+{
+  (void)arg;
+  for (;;)
+    {
+      long now;
+      long ui;
+      long inf;
+      int  kind;
+
+      sleep(5);
+      now  = mono_ms();
+      ui   = now - g_ui_beat;
+      inf  = g_inf_beat != 0 ? now - g_inf_beat : 0;
+      kind = ui > (g_ui_at == g_at_feed ? STALL_FEED_MS : STALL_UI_MS) ? 1 :
+             inf > STALL_INF_MS ? 2 : 0;
+      if (kind == 0)
+        {
+          continue;
+        }
+
+      g_stall_age = (kind == 1 ? ui : inf) / 1000;
+      g_stall_at  = g_ui_at;
+      g_stall     = kind;
+      for (int i = 0; i < STALL_NOTE_MS / 100 && !g_stall_noted; i++)
+        {
+          usleep(100000);
+        }
+
+      up_systemreset();
+    }
+
+  return NULL;
+}
+
+/* The boot line, the 10-minute line, and the STALL line for the monitor. */
+static void *stall_note(void *arg)
+{
+  char line[200];
+  long next = mono_ms() + HEALTH_MS;
+  int  m = wall_min();
+  int  n;
+
+  (void)arg;
+  snprintf(line, sizeof(line), "%02d:%02d boot rst 0x%02x%s",
+           m / 60, m % 60, (unsigned)g_boot_rr,
+           g_clock_lost ? " clock lost" : "");
+  health_note(line);
+  for (;;)
+    {
+      usleep(250000);
+      if (g_stall != 0)
+        {
+          n = snprintf(line, sizeof(line), "STALL %s at %s %lds | ",
+                       g_stall == 1 ? "ui" : "worker", g_stall_at,
+                       g_stall_age);
+          if (n > 0 && n < (int)sizeof(line))
+            {
+              health_fmt(line + n, sizeof(line) - n);
+            }
+
+          health_note(line);
+          usleep(200000);                 /* let the console line out */
+          g_stall_noted = 1;
+          for (;;)
+            {
+              sleep(60);
+            }
+        }
+
+      if (mono_ms() - next >= 0)
+        {
+          next += HEALTH_MS;
+          health_fmt(line, sizeof(line));
+          health_note(line);
+          g_cap_max = 0;
+        }
+    }
+
+  return NULL;
+}
+
+/* Started just before the UI loop, not earlier: a boot that wedges would
+ * otherwise turn into a reset loop that floods health.log. */
+static void stall_start(void)
+{
+  struct sched_param sp;
+  pthread_attr_t attr;
+  pthread_t tid;
+  int prio = 100;
+  int pmax = sched_get_priority_max(SCHED_FIFO);
+  int ok = 0;
+
+  if (sched_getparam(0, &sp) == 0)
+    {
+      prio = sp.sched_priority;
+    }
+
+  if (pmax > 10 && prio > pmax - 10)
+    {
+      prio = pmax - 10;
+    }
+
+  pthread_attr_init(&attr);
+  pthread_attr_setinheritsched(&attr, PTHREAD_EXPLICIT_SCHED);
+
+  pthread_attr_setstacksize(&attr, 2048);
+  sp.sched_priority = prio + 10;
+  pthread_attr_setschedparam(&attr, &sp);
+  if (pthread_create(&tid, &attr, stall_monitor, NULL) == 0)
+    {
+      pthread_detach(tid);
+      ok++;
+    }
+
+  pthread_attr_setstacksize(&attr, 6144);
+  sp.sched_priority = prio + 5;
+  pthread_attr_setschedparam(&attr, &sp);
+  if (pthread_create(&tid, &attr, stall_note, NULL) == 0)
+    {
+      pthread_detach(tid);
+      ok++;
+    }
+
+  pthread_attr_destroy(&attr);
+  uprintf("velapaw: stall monitor %s\n", ok == 2 ? "armed" : "NOT started");
+}
+
+/****************************************************************************
+ * meal state that survives a reset, and when to look again
+ *
+ * Which meals were eaten today, when and how much, and which the owner
+ * skipped, lived only in RAM: every reset -- now including the stall
+ * monitor's -- served the day's meals again.  fed.bin keeps them.  A skip
+ * counts only for the day it was set.
+ ****************************************************************************/
+
+#define FEED_GAP_MIN       20     /* minutes between two meals of one pet */
+#define REARM_HIT_MS       30000  /* after a pet was handled */
+#define REARM_MISS_MS      3000   /* after nobody known: doubles... */
+#define REARM_MISS_MAX_MS  20000  /* ...up to this */
+#define MEAL_POLL_MS       60000  /* one look a minute while a meal is due */
+#define MEAL_POLL_WIN_MIN  30     /* ...for its first 30 minutes */
+#define SIG_CELL_DIFF      20     /* scene_moved(): a cell changed */
+#define SIG_MIN_CELLS      2      /* ...this many of the 16 */
+#define SIG_SHIFT_MAX      48     /* ...or the whole picture (a light) */
+#define FED_MAGIC          0x56504631u   /* "VPF1" */
+
+struct fed_state
+{
+  uint32_t magic;
+  uint32_t size;                  /* a geometry change voids the file */
+  long     day;                   /* wall_day() at save */
+  long     fed_day[VELAPAW_MAX_PETS][VELAPAW_MAX_MEALS];
+  int      fed_min[VELAPAW_MAX_PETS][VELAPAW_MAX_MEALS];
+  int      fed_g[VELAPAW_MAX_PETS][VELAPAW_MAX_MEALS];
+  uint8_t  skipped[VELAPAW_MAX_PETS][VELAPAW_MAX_MEALS];
+};
+
+/* After every change to the four arrays.  UI thread only. */
+static void fed_save(void)
+{
+  struct fed_state s;
+
+  memset(&s, 0, sizeof(s));
+  s.magic = FED_MAGIC;
+  s.size  = sizeof(s);
+  s.day   = wall_day();
+  memcpy(s.fed_day, g_meal_fed_day, sizeof(s.fed_day));
+  memcpy(s.fed_min, g_meal_fed_min, sizeof(s.fed_min));
+  memcpy(s.fed_g,   g_meal_fed_g,   sizeof(s.fed_g));
+  memcpy(s.skipped, g_meal_skipped, sizeof(s.skipped));
+  if (velapaw_store_put("fed.bin", &s, sizeof(s)) < 0)
+    {
+      uprintf("velapaw: fed.bin save failed\n");
+    }
+}
+
+static void fed_load(void)
+{
+  struct fed_state s;
+
+  if (velapaw_store_get("fed.bin", &s, sizeof(s)) != (int)sizeof(s) ||
+      s.magic != FED_MAGIC || s.size != sizeof(s))
+    {
+      return;
+    }
+
+  memcpy(g_meal_fed_day, s.fed_day, sizeof(g_meal_fed_day));
+  memcpy(g_meal_fed_min, s.fed_min, sizeof(g_meal_fed_min));
+  memcpy(g_meal_fed_g,   s.fed_g,   sizeof(g_meal_fed_g));
+  if (s.day == wall_day())
+    {
+      memcpy(g_meal_skipped, s.skipped, sizeof(g_meal_skipped));
+    }
+
+  uprintf("velapaw: meal state restored from fed.bin\n");
+}
+
+/* Minutes until this pet may eat again, 0 = now.  Two meals can be due at
+ * once (one was missed, or after a reset), and now that recognition wakes by
+ * itself the second followed the first within seconds.  g_last_fed was meant
+ * to space them, but nothing ever read it. */
+static int feed_wait_min(int id, long today, int nowm)
+{
+  int wait_min = 0;
+
+  for (int k = 0; k < VELAPAW_MAX_MEALS; k++)
+    {
+      int ago = nowm - g_meal_fed_min[id][k];
+
+      if (g_meal_fed_day[id][k] == today && g_meal_fed_g[id][k] > 0 &&
+          ago >= 0 && ago < FEED_GAP_MIN && FEED_GAP_MIN - ago > wait_min)
+        {
+          wait_min = FEED_GAP_MIN - ago;
+        }
+    }
+
+  return wait_min;
+}
+
+/* A meal reached its time in the last MEAL_POLL_WIN_MIN minutes and is
+ * neither eaten nor skipped: worth a look at the bowl even when the picture
+ * has not changed.  Not all day -- a pet that never came must not keep the
+ * camera and the model busy until midnight.  UI thread only. */
+static int meal_window_open(void)
+{
+  long today = wall_day();
+  int  nowm  = wall_min();
+  int  n     = velapaw_identity_count();
+
+  for (int i = 0; i < n && i < VELAPAW_MAX_PETS; i++)
+    {
+      const struct velapaw_pet *p = velapaw_identity_get(i);
+
+      for (int k = 0; p != NULL && k < VELAPAW_MAX_MEALS; k++)
+        {
+          int since = nowm - p->meal_min[k];
+
+          if (p->meal_min[k] >= 0 && since >= 0 &&
+              since < MEAL_POLL_WIN_MIN &&
+              g_meal_fed_day[i][k] != today && !g_meal_skipped[i][k])
+            {
+              return 1;
+            }
+        }
+    }
+
+  return 0;
+}
+
+/* Mean brightness of a 4x4 grid, from every 4th pixel each way (~1000
+ * reads): cheap enough for each preview frame.  -1 if there is no picture. */
+static int scene_sig(const struct velapaw_frame *f, uint8_t sig[16])
+{
+  int cw;
+  int chh;
+
+  if (f == NULL || f->data == NULL || f->channels < 1 ||
+      f->width < 16 || f->height < 16)
+    {
+      return -1;
+    }
+
+  cw  = f->width / 4;
+  chh = f->height / 4;
+  for (int cy = 0; cy < 4; cy++)
+    {
+      for (int cx = 0; cx < 4; cx++)
+        {
+          uint32_t sum = 0;
+          uint32_t cnt = 0;
+
+          for (int y = cy * chh; y < (cy + 1) * chh; y += 4)
+            {
+              const uint8_t *row = f->data +
+                                   (size_t)y * f->width * f->channels;
+
+              for (int x = cx * cw; x < (cx + 1) * cw; x += 4)
+                {
+                  const uint8_t *px = row + (size_t)x * f->channels;
+
+                  sum += f->channels >= 3 ?
+                         (77u * px[0] + 150u * px[1] + 29u * px[2]) >> 8 :
+                         px[0];
+                  cnt++;
+                }
+            }
+
+          sig[cy * 4 + cx] = (uint8_t)(cnt != 0 ? sum / cnt : 0);
+        }
+    }
+
+  return 0;
+}
+
+/* Something moved: SIG_MIN_CELLS cells changed beyond the shift of the whole
+ * picture, or the whole picture shifted a lot.  Sensor noise and exposure
+ * drift stay under both. */
+static int scene_moved(const uint8_t ref[16], const uint8_t sig[16])
+{
+  int shift = 0;
+  int cells = 0;
+
+  for (int i = 0; i < 16; i++)
+    {
+      shift += sig[i] - ref[i];
+    }
+
+  shift /= 16;
+  if (shift > SIG_SHIFT_MAX || shift < -SIG_SHIFT_MAX)
+    {
+      return 1;
+    }
+
+  for (int i = 0; i < 16; i++)
+    {
+      int dv = sig[i] - ref[i] - shift;
+
+      if (dv > SIG_CELL_DIFF || dv < -SIG_CELL_DIFF)
+        {
+          cells++;
+        }
+    }
+
+  return cells >= SIG_MIN_CELLS;
+}
 
 #ifdef CONFIG_VELAPAW_VOICE
 /* ---- voice (keyword spotting): shared state ------------------------------
@@ -659,7 +1149,7 @@ static int            g_voice_shown;  /* 0 blank, 1 prompt, 2 off, 3 verdict  */
 #  error "raise VELAPAW_MIC_BUFS in voice/mic.h or shorten the window"
 #endif
 
-static int16_t        g_voice_audio[VOICE_CAPTURE_SAMPLES];
+static int16_t        *g_voice_audio;
 
 /* Acceptance thresholds, deliberately asymmetric.  Acting on a false "yes"
  * puts food in the bowl for a pet that should not eat; missing a real one
@@ -801,34 +1291,184 @@ static lv_obj_t *g_vc_lbl;      /* dialog prompt / verdict, in the modal    */
 static lv_obj_t *g_vc_btn;      /* the mic button (doubles as cancel)       */
 #endif /* CONFIG_VELAPAW_VOICE */
 
+/* The HAL returns 0 even when a capture fails and leaves the last good
+ * picture in the buffer, so a dead camera looks like a frozen screen.  Count
+ * what it does report, the slow grabs, and frames identical to the one
+ * before, for the health line. */
 static void cam_grab(struct velapaw_frame *f)
 {
-  velapaw_camera_get_frame(f);
-  if (++g_cap_n % 200 == 0)
+  static uint32_t last;
+  long t0 = mono_ms();
+  long ms;
+
+  g_ui_at = "cam";
+  if (velapaw_camera_get_frame(f) != 0)
     {
-      printf("velapaw/cam: capture #%lu\n", g_cap_n);
+      g_cap_err++;
     }
+
+  ms = mono_ms() - t0;
+  if (ms > g_cap_max)
+    {
+      g_cap_max = ms;
+    }
+
+  if (ms > CAP_SLOW_MS)
+    {
+      g_cap_slow++;
+    }
+
+  if (f->data != NULL && f->width > 0 && f->height > 0 && f->channels > 0)
+    {
+      size_t   len  = (size_t)f->width * f->height * f->channels;
+      size_t   step = len / 256 + 1;
+      uint32_t h    = 2166136261u;
+      uint8_t  lo   = 255;
+      uint8_t  hi   = 0;
+
+      for (size_t i = 0; i < len; i += step)
+        {
+          uint8_t v = f->data[i];
+
+          h = (h ^ v) * 16777619u;
+          if (v < lo)
+            {
+              lo = v;
+            }
+
+          if (v > hi)
+            {
+              hi = v;
+            }
+        }
+
+      /* sensor noise makes two real frames differ; a black one may not */
+
+      if (h == last && hi - lo > 16)
+        {
+          g_cap_same++;
+        }
+
+      last = h;
+    }
+
+  g_cap_n++;
 }
 
 /****************************************************************************
- * appetite / alert  (relative to each pet's DAILY LIMIT = the ration the
- * owner set, not a rolling average)
+ * appetite / alert  (relative to each pet's PLAN: portion x meals set, minus
+ * the meals skipped today, at most the daily limit.  The limit is only a
+ * safety cap: against it a pet that ate every meal read 65 %.)
  ****************************************************************************/
 
-/* % of today's ration eaten: today / daily_limit (0..100, since feeding stops
- * at the limit). 100% = ate its full daily allowance. */
-static int pet_appetite_pct(velapaw_pet_id_t id, const struct velapaw_pet *p)
+#define PLAN_SKIPS  1      /* leave out the meals the owner skipped today */
+#define PLAN_DUE    2      /* ...and the ones not due yet */
+
+/* Grams the plan gives a pet: every meal set (how 0: past days), minus
+ * today's skips, and with PLAN_DUE only the meals due by now.  A meal is due
+ * once eaten, or MEAL_POLL_WIN_MIN after its time -- the window the camera
+ * keeps looking for the pet -- so a meal still being waited for counts
+ * neither way. */
+static int pet_plan_g(velapaw_pet_id_t id, const struct velapaw_pet *p, int how)
 {
-  int today = velapaw_store_today_total(id);
-  int pct = (p->daily_limit_g > 0) ? today * 100 / p->daily_limit_g : 100;
-  return (pct > 100) ? 100 : pct;   /* limit is a cap: never over 100% */
+  long today = wall_day();
+  int  nowm  = wall_min();
+  int  grams = 0;
+
+  for (int k = 0; k < VELAPAW_MAX_MEALS; k++)
+    {
+      int mm = p->meal_min[k];
+
+      if (mm < 0 || ((how & PLAN_SKIPS) && g_meal_skipped[id][k]) ||
+          ((how & PLAN_DUE) && g_meal_fed_day[id][k] != today &&
+           nowm < mm + MEAL_POLL_WIN_MIN))
+        {
+          continue;
+        }
+
+      grams += p->portion_g;
+    }
+
+  return (grams > p->daily_limit_g) ? p->daily_limit_g : grams;
 }
 
-/* appetite-drop alert: the last completed day was under half the daily limit. */
+/* % of the meals due so far that the pet got: after breakfast, 100 %, not a
+ * third of the day.  100 while nothing is due. */
+static int pet_appetite_pct(velapaw_pet_id_t id, const struct velapaw_pet *p)
+{
+  int due = pet_plan_g(id, p, PLAN_SKIPS | PLAN_DUE);
+  int pct = (due > 0) ? velapaw_store_today_total(id) * 100 / due : 100;
+  return (pct > 100) ? 100 : pct;
+}
+
+/* appetite-drop alert: the last day that ended with the board running got
+ * under half its plan (judged by day_judge(), kept by the store). */
 static int pet_alert_drop(velapaw_pet_id_t id, const struct velapaw_pet *p)
 {
-  int yesterday = velapaw_store_day_total(id, 1);
-  return (p->daily_limit_g > 0 && yesterday * 2 < p->daily_limit_g) ? 1 : 0;
+  (void)p;
+  return velapaw_store_alert_drop(id);
+}
+
+static long g_judged_hd = -1;      /* hist day when a day was last judged */
+static int  g_status_stale;        /* a verdict changed: rewrite status.md */
+
+/* Give the store each pet's plan and due grams for status.md.  1 if any
+ * changed. */
+static int plan_push(void)
+{
+  int n = velapaw_identity_count();
+  int changed = 0;
+
+  for (int i = 0; i < VELAPAW_MAX_PETS; i++)
+    {
+      const struct velapaw_pet *p = (i < n) ? velapaw_identity_get(i) : NULL;
+
+      changed |= velapaw_store_set_plan(i,
+                   p ? pet_plan_g(i, p, PLAN_SKIPS) : 0,
+                   p ? pet_plan_g(i, p, PLAN_SKIPS | PLAN_DUE) : 0);
+    }
+
+  return changed;
+}
+
+/* ...and rewrite status.md if that or a verdict moved.  1 if the plan did. */
+static int plan_sync(void)
+{
+  int moved = plan_push();
+
+  if (moved || g_status_stale)
+    {
+      g_status_stale = 0;
+      velapaw_store_status_refresh();
+    }
+
+  return moved;
+}
+
+/* A day ended with the board running (midnight, or the demo Next Day): judge
+ * it against its plan.  The plan counts that day's skips, so call this before
+ * they are cleared.  ok 0 (the clock jumped days) clears every verdict. */
+static void day_judge(int ok)
+{
+  int n = velapaw_identity_count();
+
+  for (int i = 0; i < VELAPAW_MAX_PETS; i++)
+    {
+      const struct velapaw_pet *p = (i < n) ? velapaw_identity_get(i) : NULL;
+      int plan = (ok && p) ? pet_plan_g(i, p, PLAN_SKIPS) : 0;
+
+      velapaw_store_judge_day(i, plan);
+      if (plan > 0)
+        {
+          uprintf("velapaw: day judged, %s got %d g of %d g (%d%%)%s\n",
+                  p->name, velapaw_store_day_total(i, 1), plan,
+                  velapaw_store_last_day_pct(i),
+                  velapaw_store_alert_drop(i) ? ", appetite alert" : "");
+        }
+    }
+
+  g_judged_hd    = velapaw_store_hist_day();
+  g_status_stale = 1;
 }
 
 /****************************************************************************
@@ -898,7 +1538,7 @@ static void finish_capture(void)
   frame_to_thumb565(&g_inf_frame, g_thumb565[g_nsamp]);
   lv_image_set_src(g_thumb[g_nsamp], &g_thumb_dsc[g_nsamp]);
   g_nsamp++;
-  printf("velapaw/ui: captured sample %d/%d\n", g_nsamp, MAX_SHOTS);
+  uprintf("velapaw/ui: captured sample %d/%d\n", g_nsamp, MAX_SHOTS);
 
   g_cap_pending = 0;
   g_inf_mode    = 0;
@@ -907,6 +1547,13 @@ static void finish_capture(void)
 }
 
 static void refresh_pets(void);
+
+/* Latest heartbeat warning from the ai_agent (set by ag_poll, UI thread only).
+ * It turns the bell red and is listed in the bell panel until the next
+ * HEARTBEAT_OK clears it. */
+static int  g_ag_alert;
+static int  g_ag_min;                  /* wall minute-of-day it arrived */
+static char g_ag_txt[160];
 
 static void popup_ok_cb(lv_event_t *e)
 {
@@ -965,6 +1612,7 @@ static void bell_cb(lv_event_t *e)
   lv_obj_clear_flag(ov, LV_OBJ_FLAG_SCROLLABLE);
 
   lv_obj_t *card = make_card(ov, 420, 250, COL_CARD);
+  lv_obj_add_flag(card, LV_OBJ_FLAG_SCROLLABLE);  /* an agent warning can overflow 250 px */
   lv_obj_center(card);
   lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_row(card, 8, 0);
@@ -995,6 +1643,15 @@ static void bell_cb(lv_event_t *e)
               p->name, (bcs == 0) ? T(S_UNDERWEIGHT) : T(S_OVERWEIGHT));
           alerts++;
         }
+    }
+  if (g_ag_alert)
+    {
+      lv_obj_t *l = make_label(card, F_BODY, COL_UNK);
+      lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
+      lv_obj_set_width(l, 380);
+      lv_label_set_text_fmt(l, T(S_AG_WARN_FMT),
+                            g_ag_min / 60, g_ag_min % 60, g_ag_txt);
+      alerts++;
     }
   if (alerts == 0)
     {
@@ -1041,8 +1698,8 @@ static void do_save(void)
                                                 UI_DEMO_COOLDOWN_S, limit,
                                                 g_meal_min,   /* 3 meal times */
                                                 g_samples, g_nsamp);
-  printf("velapaw/ui: saved %s (id %d) %dg from %d samples\n",
-         name, id, portion, g_nsamp);
+  uprintf("velapaw/ui: saved %s (id %d) %dg from %d samples\n",
+          name, id, portion, g_nsamp);
 
   /* Card icon: down-sample a middle capture's 64x64 thumbnail to the icon size
    * (nearest-neighbour) and persist it. Reuses the enroll thumbnail, which is
@@ -1164,6 +1821,13 @@ static void build_enroll(lv_obj_t *tab)
   lv_obj_set_flex_align(strip, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
                         LV_FLEX_ALIGN_CENTER);
   lv_obj_clear_flag(strip, LV_OBJ_FLAG_SCROLLABLE);
+
+  g_thumb565 = malloc(MAX_SHOTS * sizeof(*g_thumb565));
+  if (g_thumb565 == NULL)
+    {
+      uprintf("velapaw/ui: thumbnail buffer alloc failed\n");
+    }
+
   for (int i = 0; i < MAX_SHOTS; i++)
     {
       g_thumb_dsc[i].header.magic = LV_IMAGE_HEADER_MAGIC;
@@ -1301,10 +1965,11 @@ static void build_recognize(lv_obj_t *tab)
  * my pets
  ****************************************************************************/
 
-/* red bell when any pet shows a sudden appetite drop */
+/* red bell when any pet shows a sudden appetite drop, or the agent's last
+ * heartbeat raised a warning */
 static void update_bell(void)
 {
-  int alert = 0;
+  int alert = g_ag_alert;
   int n = velapaw_identity_count();
   for (int i = 0; i < n; i++)
     {
@@ -1382,6 +2047,7 @@ static void edit_open(velapaw_pet_id_t id)
   for (int k = 0; k < VELAPAW_MAX_MEALS; k++)
     {
       g_edit_meal[k] = p->meal_min[k];
+      g_edit_orig[k] = p->meal_min[k];
     }
 
   lv_slider_set_value(g_edit_portion_sl, p->portion_g, LV_ANIM_OFF);
@@ -1436,12 +2102,13 @@ static void edit_save(void)
 
   velapaw_identity_update(id, portion, limit, g_edit_meal);
   velapaw_identity_save();          /* persist: the new times survive a reset */
+  velapaw_store_status_refresh();   /* ...and the agent sees them now */
 
-  printf("velapaw/ui: pet %d updated - %dg, limit %dg, meals %02d:%02d "
-         "%02d:%02d %02d:%02d\n", id, portion, limit,
-         g_edit_meal[0] / 60, g_edit_meal[0] % 60,
-         g_edit_meal[1] / 60, g_edit_meal[1] % 60,
-         g_edit_meal[2] / 60, g_edit_meal[2] % 60);
+  uprintf("velapaw/ui: pet %d updated - %dg, limit %dg, meals %02d:%02d "
+          "%02d:%02d %02d:%02d\n", id, portion, limit,
+          g_edit_meal[0] / 60, g_edit_meal[0] % 60,
+          g_edit_meal[1] / 60, g_edit_meal[1] % 60,
+          g_edit_meal[2] / 60, g_edit_meal[2] % 60);
 
   edit_close();
   refresh_pets();
@@ -1494,6 +2161,12 @@ static void do_delete_pet(velapaw_pet_id_t id)
   velapaw_identity_delete(id);         /* the pet itself + icon, renumbers rest */
   velapaw_identity_save();             /* persist: stays deleted after reset */
   velapaw_identity_save_icons();       /* icons were shifted too */
+  fed_save();                          /* and today's meals */
+
+  /* velapaw_store_delete() above wrote status.md while the pet still existed,
+   * pairing every later name with the next pet's history.  Rewrite it now that
+   * the names have shifted too. */
+  velapaw_store_status_refresh();
 
   /* every id we were holding may now point at a different pet */
   g_fed_visit = VELAPAW_PET_UNKNOWN;
@@ -1505,7 +2178,7 @@ static void do_delete_pet(velapaw_pet_id_t id)
   if (g_trend_pet >= n) g_trend_pet = (n > 0) ? n - 1 : 0;
   g_petn = n;
 
-  printf("velapaw/ui: deleted pet %d (%d left)\n", (int)id, n);
+  uprintf("velapaw/ui: deleted pet %d (%d left)\n", (int)id, n);
 }
 
 static void edit_btn_cb(lv_event_t *e)
@@ -1520,11 +2193,13 @@ static void meal_skip_toggle_cb(lv_event_t *e)
   int pet  = enc / VELAPAW_MAX_MEALS;
   int slot = enc % VELAPAW_MAX_MEALS;
   g_meal_skipped[pet][slot] = !g_meal_skipped[pet][slot];
+  fed_save();
   refresh_pets();
 }
 
 static void refresh_pets(void)
 {
+  plan_sync();                      /* status.md follows what this shows */
   if (g_pets_box == NULL)
     {
       return;
@@ -1619,9 +2294,10 @@ static void refresh_pets(void)
        * "08:00  ate 08:02  15g"  = eaten (recognised at/after the meal)
        * "12:30  waiting for pet" = meal is due but the pet hasn't shown up
        * "18:00  pending"         = still ahead today
-       * "18:00  skipped"         = owner tapped it off; won't dispense today
+       * "18:00  skipped"         = owner tapped it off, or the daily limit
+       *                            closed it; won't dispense today
        * Not-yet-eaten rows are tappable to toggle skipped, e.g. skip meal 2
-       * but still feed 1 and 3. Resets automatically at the next Next Day. */
+       * but still feed 1 and 3. Resets at midnight and at Next Day. */
       { long today_d = wall_day();
         int  nowm    = wall_min();
         int  any     = 0;
@@ -1631,7 +2307,13 @@ static void refresh_pets(void)
             if (mm < 0) continue;
             any = 1;
             lv_obj_t *ml = make_label(row, F_SMALL, COL_DIM);
-            if (g_meal_fed_day[i][k] == today_d)
+            if (g_meal_fed_day[i][k] == today_d && g_meal_fed_g[i][k] == 0)
+              {
+                /* closed by the daily limit: nothing was served */
+
+                lv_label_set_text_fmt(ml, T(S_SKIPPED), mm / 60, mm % 60);
+              }
+            else if (g_meal_fed_day[i][k] == today_d)
               {
                 lv_obj_set_style_text_color(ml, lv_color_hex(COL_FED), 0);
                 lv_label_set_text_fmt(ml, T(S_ATE_FMT),
@@ -1669,7 +2351,14 @@ static void refresh_pets(void)
       lv_obj_t *l2 = make_label(row, F_SMALL, COL_DIM);
       lv_label_set_text_fmt(l2, T(S_AVG_WEEK_FMT), avg, week);
 
-      uint32_t pcol = (pct >= 70) ? COL_FED : (pct >= 40) ? COL_COOL : COL_UNK;
+      /* the alert is about the day that ended: show that day's %, in red */
+      if (alert)
+        {
+          pct = velapaw_store_last_day_pct(i);
+        }
+
+      uint32_t pcol = alert ? COL_UNK
+                    : (pct >= 70) ? COL_FED : (pct >= 40) ? COL_COOL : COL_UNK;
       lv_obj_t *l3 = make_label(row, F_BODY, pcol);
       if (alert)
         {
@@ -2052,14 +2741,18 @@ static void refresh_trends(void)
     }
   lv_chart_refresh(g_trend_chart);
 
-  /* appetite line: each day's intake as a % of the pet's daily allowance */
+  /* appetite line: each past day's intake as a % of the pet's plan (portion x
+   * meals set, at most the daily limit); today's point is the % My Pets
+   * shows, against the meals due so far */
   if (g_appet_chart)
     {
+      int plan = pet_plan_g(g_trend_pet, pet, 0);
+
       lv_chart_set_point_count(g_appet_chart, n);
       for (int i = 0; i < n; i++)
         {
-          int pct = (pet->daily_limit_g > 0)
-                    ? (int)(g_trend_vals[i] * 100 / pet->daily_limit_g) : 0;
+          int pct = (i == n - 1) ? pet_appetite_pct(g_trend_pet, pet)
+                    : (plan > 0) ? (int)(g_trend_vals[i] * 100 / plan) : 0;
           lv_chart_set_value_by_id(g_appet_chart, g_appet_ser, i,
                                    pct > 100 ? 100 : pct);
         }
@@ -2115,9 +2808,10 @@ static void trend_bar_color_cb(lv_event_t *e)
     }
 }
 
-/* Appetite line chart: each day's intake as a % of the pet's daily allowance
- * (0-100) -- a distinct read from the intake bars ("how much of their ration
- * did they eat each day"). Refreshed alongside the bars in refresh_trends. */
+/* Appetite line chart: each day's intake as a % of the pet's plan (0-100;
+ * today against the meals due so far) -- a distinct read from the intake bars
+ * ("how much of their meals did they eat each day"). Refreshed alongside the
+ * bars in refresh_trends. */
 static void build_appetite_chart(lv_obj_t *tab)
 {
   lv_obj_t *card = make_card(tab, COL_W, 150, COL_CARD);
@@ -2312,13 +3006,16 @@ static bool ui_touch_active(void)
  * coordinated by g_inf_state: 0 idle -> 1 request -> 2 busy -> 3 done -> 0.
  * The UI pauses camera preview capture while state != 0 so the shared frame
  * buffer the worker reads is never overwritten mid-inference.
- * (State lives near the top of the file -- Capture needs it too.) */
+ * (State lives near the top of the file -- Capture needs it too.)
+ * g_inf_beat is refreshed every pass of the idle poll, so it goes stale only
+ * inside a request; the stall monitor resets the board at STALL_INF_MS. */
 
 static void *recog_worker(void *arg)
 {
   (void)arg;
   for (;;)
     {
+      g_inf_beat = mono_ms();
       if (g_inf_state != 1) { usleep(5000); continue; }
       g_inf_state = 2;
       pthread_mutex_lock(&g_tflm_lock);      /* vs. the voice worker's Invoke */
@@ -2329,6 +3026,7 @@ static void *recog_worker(void *arg)
         {
           velapaw_identity_match(g_inf_emb, &g_inf_m);  /* recognize only */
         }
+      g_inf_n++;
       g_inf_state = 3;
     }
   return NULL;
@@ -2436,7 +3134,15 @@ static void *voice_worker(void *arg)
   g_voice_init_rc = velapaw_kws_init();
   if (g_voice_init_rc < 0)
     {
-      printf("velapaw/voice: kws init failed; voice disabled\n");
+      uprintf("velapaw/voice: kws init failed; voice disabled\n");
+      g_voice_fail = 1;
+      return NULL;
+    }
+
+  g_voice_audio = malloc(VOICE_CAPTURE_SAMPLES * sizeof(*g_voice_audio));
+  if (g_voice_audio == NULL)
+    {
+      uprintf("velapaw/voice: audio buffer alloc failed; voice disabled\n");
       g_voice_fail = 1;
       return NULL;
     }
@@ -2460,8 +3166,8 @@ static void *voice_worker(void *arg)
 
   g_voice_preopen_rc = velapaw_mic_preopen();
 
-  printf("velapaw/voice: worker ready (mic pre-open %d)\n",
-         g_voice_preopen_rc);
+  uprintf("velapaw/voice: worker ready (mic pre-open %d)\n",
+          g_voice_preopen_rc);
 
   for (;;)
     {
@@ -2517,13 +3223,13 @@ static void *voice_worker(void *arg)
           g_voice_consec++;
 
           vlog("cap FAILED %d (%d in a row)", got, g_voice_consec);
-          printf("velapaw/voice: capture failed (%d), %d in a row\n",
-                 got, g_voice_consec);
+          uprintf("velapaw/voice: capture failed (%d), %d in a row\n",
+                  got, g_voice_consec);
 
           if (g_voice_consec >= VOICE_MAX_CAPFAIL)
             {
-              printf("velapaw/voice: %d consecutive failures; "
-                     "voice disabled\n", g_voice_consec);
+              uprintf("velapaw/voice: %d consecutive failures; "
+                      "voice disabled\n", g_voice_consec);
               g_voice_fail = 1;
               return NULL;
             }
@@ -2607,8 +3313,8 @@ static void *voice_worker(void *arg)
        * of what the microphone actually heard, and it is what the on-hardware
        * threshold re-tune will be read from. */
 
-      printf("velapaw/voice: heard %s (%.3f)\n",
-             velapaw_kws_label_name(r.label), (double)r.score);
+      uprintf("velapaw/voice: heard %s (%.3f)\n",
+              velapaw_kws_label_name(r.label), (double)r.score);
 
       g_voice_res   = r;
       g_voice_score = r.score;
@@ -2741,8 +3447,8 @@ static void vsched_commit(int hour)
   snprintf(buf, sizeof(buf), T(S_VC_SAVED_FMT), g_vs.slot + 1, hour);
   vsched_stop(COL_FED, buf);
 
-  printf("velapaw/voice: meal %d set to %02d:00 by voice\n",
-         g_vs.slot + 1, hour);
+  uprintf("velapaw/voice: meal %d set to %02d:00 by voice\n",
+          g_vs.slot + 1, hour);
 }
 
 /* One capture, interpreted in the context of the current step.  Returns with
@@ -2790,9 +3496,9 @@ static void vsched_step(const struct velapaw_kws_result_s *r)
       return;
     }
 
-  printf("velapaw/voice: step %d best-of-%d %s %.3f (need %.2f)\n",
-         g_vs.state, nwords, velapaw_kws_label_name(heard),
-         (double)score, (double)need);
+  uprintf("velapaw/voice: step %d best-of-%d %s %.3f (need %.2f)\n",
+          g_vs.state, nwords, velapaw_kws_label_name(heard),
+          (double)score, (double)need);
 
   /* Every outcome below also goes to the RAM log.  The printf above has never
    * once reached the console -- see the g_vlog block -- and these scores are
@@ -3011,9 +3717,9 @@ static int voice_apply(int label)
   need = (label == VELAPAW_KWS_YES) ? VOICE_YES_SCORE : VOICE_NO_SCORE;
   if (g_voice_score < need)
     {
-      printf("velapaw/voice: %s %.3f below %.2f, ignored\n",
-             velapaw_kws_label_name(label), (double)g_voice_score,
-             (double)need);
+      uprintf("velapaw/voice: %s %.3f below %.2f, ignored\n",
+              velapaw_kws_label_name(label), (double)g_voice_score,
+              (double)need);
       return 0;
     }
 
@@ -3060,7 +3766,9 @@ static int voice_apply(int label)
   remaining = pet->daily_limit_g - today;
   amount    = (pet->portion_g < remaining) ? pet->portion_g : remaining;
 
+  g_ui_at = g_at_feed;
   velapaw_feeder_dispense(amount);
+  g_ui_at = "voice";
 
   { struct timespec _w;
     clock_gettime(CLOCK_REALTIME, &_w);
@@ -3081,8 +3789,8 @@ static int voice_apply(int label)
                         velapaw_store_today_total(g_cand),
                         pet->daily_limit_g);
 
-  printf("velapaw/voice: fed %s %dg by voice (%.2f)\n",
-         pet->name, amount, (double)g_voice_score);
+  uprintf("velapaw/voice: fed %s %dg by voice (%.2f)\n",
+          pet->name, amount, (double)g_voice_score);
   return 1;
 }
 
@@ -3381,8 +4089,457 @@ void velapaw_ui_voice_probe(void)
         usleep(30000);
       }
   }
+
+  /* The health line as it stands now, without waiting up to 10 minutes for
+   * the next one in health.log (see health_fmt for the fields). */
+
+  { char hl[200];
+
+    health_fmt(hl, sizeof(hl));
+    printf("velapaw/health: %s\n", hl);
+    printf("velapaw/health: boot rst 0x%02x%s\n", (unsigned)g_boot_rr,
+           g_clock_lost ? " clock lost" : "");
+    fflush(stdout);
+  }
 }
 #endif /* CONFIG_VELAPAW_VOICE */
+
+/****************************************************************************
+ * the ai_agent on the LCD
+ *
+ * The agent runs on its own pthread, so it must never touch LVGL.  agent_loop.c
+ * calls velapaw_agent_event() at the start and end of every turn; that only
+ * copies the text into a mutex-guarded slot and bumps a sequence number.  The
+ * UI loop polls the number (ag_poll) and draws a toast just under the bell:
+ *   - an `ask` (any chat but the heartbeat): the question, a live "working"
+ *     timer, then the reply;
+ *   - the heartbeat: "HEARTBEAT_OK" is a short green all-clear, anything else
+ *     is a warning that stays up, turns the bell red and is listed in the bell
+ *     panel until the next all-clear.  A heartbeat that fails says nothing.
+ ****************************************************************************/
+
+#define AG_REPLY_SHOW_MS   30000  /* a reply stays up this long (tap hides it) */
+#define AG_OK_SHOW_MS      10000  /* a heartbeat all-clear is brief */
+#define AG_STUCK_MS       600000  /* past the agent's own 420 s LLM watchdog */
+
+enum { AG_IDLE, AG_WORKING, AG_REPLIED, AG_FAILED, AG_DONE };
+
+/* written by the agent thread under g_ag_lock */
+static pthread_mutex_t g_ag_lock = PTHREAD_MUTEX_INITIALIZER;
+static volatile unsigned g_ag_seq;
+static char g_ag_in_q[96];
+static char g_ag_in_a[160];
+static int  g_ag_in_state;
+static int  g_ag_in_hb;                /* the turn is the heartbeat */
+static int  g_ag_in_ok;                /* ...and its reply was HEARTBEAT_OK */
+
+/* UI thread only */
+static lv_obj_t *g_ag_toast;
+static lv_obj_t *g_ag_ql;              /* "You: <question>" */
+static lv_obj_t *g_ag_al;              /* timer / reply / status */
+static unsigned  g_ag_seen;            /* last g_ag_seq taken */
+static int       g_ag_state;
+static int       g_ag_hb;
+static int       g_ag_ok;
+static int       g_ag_shown;           /* toast should be visible */
+static char      g_ag_q[96];
+static char      g_ag_a[160];
+static long      g_ag_t0;              /* mono_ms the current state began */
+static long      g_ag_hide_at;         /* mono_ms to auto-hide, 0 = stay up */
+static int       g_ag_last_s = -1;     /* "working" seconds last drawn */
+static unsigned  g_ident_seen;         /* last velapaw_identity_gen() acted on */
+
+/* Copy an LLM reply into `dst` as one line the LCD can draw.  Replies arrive
+ * as markdown with typographic punctuation; the CJK subset font has no glyph
+ * for a curly quote or a dash and would leave a blank.  So: drop * # `, fold
+ * every run of whitespace into one space, map smart punctuation to ASCII, drop
+ * 4-byte UTF-8 (emoji) and malformed bytes, and cut on a whole character with
+ * "..." when it does not fit. */
+static void ag_clean(char *dst, size_t cap, const char *src)
+{
+  const unsigned char *s = (const unsigned char *)src;
+  size_t n = 0;
+  int sp = 0;                          /* a space is owed before the next char */
+  int cut = 0;
+
+  if (cap < 4 || s == NULL)
+    {
+      if (cap > 0)
+        {
+          dst[0] = '\0';
+        }
+
+      return;
+    }
+
+  while (*s)
+    {
+      const char *rep = NULL;          /* ASCII stand-in for this character */
+      size_t len = 1;
+      unsigned c = s[0];
+
+      if (c < 0x80)
+        {
+          if (c == '*' || c == '#' || c == '`')
+            {
+              s++;
+              continue;
+            }
+
+          if (c <= ' ' || c == 0x7f)
+            {
+              sp = (n > 0);
+              s++;
+              continue;
+            }
+        }
+      else if ((c & 0xe0) == 0xc0 && (s[1] & 0xc0) == 0x80)
+        {
+          len = 2;
+          if (c == 0xc2 && s[1] == 0xa0)               /* no-break space */
+            {
+              sp = (n > 0);
+              s += 2;
+              continue;
+            }
+        }
+      else if ((c & 0xf0) == 0xe0 && (s[1] & 0xc0) == 0x80 &&
+               (s[2] & 0xc0) == 0x80)
+        {
+          len = 3;
+          if (c == 0xe2 && s[1] == 0x80)
+            {
+              switch (s[2])
+                {
+                  case 0x98: case 0x99: rep = "'";   break;  /* U+2018/9 */
+                  case 0x9c: case 0x9d: rep = "\"";  break;  /* U+201C/D */
+                  case 0x93: case 0x94: rep = "-";   break;  /* U+2013/4 */
+                  case 0xa6:            rep = "..."; break;  /* U+2026   */
+                  default:                           break;
+                }
+            }
+        }
+      else
+        {
+          /* emoji or a broken sequence: skip it and its continuation bytes */
+
+          s++;
+          while ((*s & 0xc0) == 0x80)
+            {
+              s++;
+            }
+
+          continue;
+        }
+
+      size_t olen = rep ? strlen(rep) : len;
+
+      if (n + (sp ? 1 : 0) + olen > cap - 4)          /* room for "..." + NUL */
+        {
+          cut = 1;
+          break;
+        }
+
+      if (sp)
+        {
+          dst[n++] = ' ';
+          sp = 0;
+        }
+
+      memcpy(dst + n, rep ? rep : (const char *)s, olen);
+      n += olen;
+      s += len;
+    }
+
+  if (cut)
+    {
+      memcpy(dst + n, "...", 3);
+      n += 3;
+    }
+
+  dst[n] = '\0';
+}
+
+/* Called on the ai_agent thread from packages/ai_agent/src/core/agent_loop.c,
+ * which declares it by hand (same FLAT image).  kind: 0 = turn started (text is
+ * the question), 1 = reply, 2 = failed, 3 = tools ran but the confirming LLM
+ * call timed out.  Copies only; the caller keeps ownership of `text`. */
+void velapaw_agent_event(const char *chat_id, const char *text, int kind);
+
+void velapaw_agent_event(const char *chat_id, const char *text, int kind)
+{
+  pthread_mutex_lock(&g_ag_lock);
+
+  g_ag_in_hb = (chat_id != NULL && strcmp(chat_id, "heartbeat") == 0);
+  g_ag_in_ok = 0;
+
+  switch (kind)
+    {
+      case 0:
+        ag_clean(g_ag_in_q, sizeof(g_ag_in_q), text);
+        g_ag_in_a[0]  = '\0';
+        g_ag_in_state = AG_WORKING;
+        break;
+
+      case 1:
+        ag_clean(g_ag_in_a, sizeof(g_ag_in_a), text);
+        g_ag_in_ok    = (text != NULL && strstr(text, "HEARTBEAT_OK") != NULL);
+        g_ag_in_state = AG_REPLIED;
+        break;
+
+      case 3:
+        g_ag_in_a[0]  = '\0';
+        g_ag_in_state = AG_DONE;
+        break;
+
+      default:
+        g_ag_in_a[0]  = '\0';
+        g_ag_in_state = AG_FAILED;
+        break;
+    }
+
+  g_ag_seq++;
+  pthread_mutex_unlock(&g_ag_lock);
+}
+
+/* Paint the toast from the UI-thread copy of the agent state. */
+static void ag_render(long now)
+{
+  uint32_t edge = COL_ACCENT;
+  uint32_t ink  = COL_TEXT;
+
+  if (g_ag_toast == NULL || g_ag_state == AG_IDLE)
+    {
+      return;
+    }
+
+  if (g_ag_hb)
+    {
+      lv_obj_add_flag(g_ag_ql, LV_OBJ_FLAG_HIDDEN);
+    }
+  else
+    {
+      lv_obj_clear_flag(g_ag_ql, LV_OBJ_FLAG_HIDDEN);
+      lv_label_set_text_fmt(g_ag_ql, T(S_AG_YOU_FMT), g_ag_q);
+    }
+
+  switch (g_ag_state)
+    {
+      case AG_WORKING:
+        ink = COL_ACCENT;
+        if (g_ag_hb)
+          {
+            lv_label_set_text(g_ag_al, T(S_AG_CHECKING));
+          }
+        else
+          {
+            g_ag_last_s = (int)((now - g_ag_t0) / 1000);
+            lv_label_set_text_fmt(g_ag_al, T(S_AG_WORKING_FMT), g_ag_last_s);
+          }
+        break;
+
+      case AG_REPLIED:
+        if (g_ag_hb && g_ag_ok)
+          {
+            edge = ink = COL_FED;
+            lv_label_set_text_fmt(g_ag_al, T(S_AG_HB_OK_FMT),
+                                  g_ag_min / 60, g_ag_min % 60);
+          }
+        else if (g_ag_hb)
+          {
+            edge = ink = COL_UNK;
+            lv_label_set_text_fmt(g_ag_al, T(S_AG_WARN_FMT),
+                                  g_ag_min / 60, g_ag_min % 60, g_ag_a);
+          }
+        else
+          {
+            lv_label_set_text_fmt(g_ag_al, T(S_AG_REPLY_FMT), g_ag_a);
+          }
+        break;
+
+      case AG_DONE:
+        edge = ink = COL_FED;
+        lv_label_set_text(g_ag_al, T(S_AG_DONE));
+        break;
+
+      default:
+        edge = ink = COL_COOL;
+        lv_label_set_text(g_ag_al, T(S_AG_FAILED));
+        break;
+    }
+
+  lv_obj_set_style_border_color(g_ag_toast, lv_color_hex(edge), 0);
+  lv_obj_set_style_text_color(g_ag_al, lv_color_hex(ink), 0);
+
+  if (g_ag_shown)
+    {
+      lv_obj_clear_flag(g_ag_toast, LV_OBJ_FLAG_HIDDEN);
+    }
+  else
+    {
+      lv_obj_add_flag(g_ag_toast, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+static void ag_toast_cb(lv_event_t *e)
+{
+  (void)e;
+  g_ag_shown   = 0;                    /* tap = dismiss; the next turn reopens it */
+  g_ag_hide_at = 0;
+  lv_obj_add_flag(g_ag_toast, LV_OBJ_FLAG_HIDDEN);
+}
+
+/* Build the (hidden) toast.  Called from ui_build, so a language toggle gets a
+ * fresh one in the new language showing whatever the agent last said. */
+static void ag_build(lv_obj_t *parent)
+{
+  g_ag_toast = make_card(parent, 300, LV_SIZE_CONTENT, COL_CARD2);
+  lv_obj_align(g_ag_toast, LV_ALIGN_TOP_RIGHT, -4, 26);
+  lv_obj_set_style_border_width(g_ag_toast, 2, 0);
+  lv_obj_set_flex_flow(g_ag_toast, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_row(g_ag_toast, 2, 0);
+  lv_obj_add_flag(g_ag_toast, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(g_ag_toast, ag_toast_cb, LV_EVENT_CLICKED, NULL);
+
+  g_ag_ql = make_label(g_ag_toast, F_SMALL, COL_DIM);
+  lv_label_set_long_mode(g_ag_ql, LV_LABEL_LONG_DOT);
+  lv_obj_set_size(g_ag_ql, 280, lv_font_get_line_height(F_SMALL));
+
+  g_ag_al = make_label(g_ag_toast, F_BODY, COL_TEXT);
+  lv_label_set_long_mode(g_ag_al, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(g_ag_al, 280);
+
+  lv_obj_add_flag(g_ag_toast, LV_OBJ_FLAG_HIDDEN);
+  ag_render(mono_ms());
+
+  if (g_ag_alert)
+    {
+      update_bell();                   /* the rebuilt bell starts out grey */
+    }
+}
+
+static void ag_poll(long now)
+{
+  if (g_ag_seq != g_ag_seen)
+    {
+      pthread_mutex_lock(&g_ag_lock);
+      g_ag_seen  = g_ag_seq;           /* newest wins; a start+reply pair that
+                                        * lands in one 20 ms pass shows as the
+                                        * reply, with its question */
+      g_ag_state = g_ag_in_state;
+      g_ag_hb    = g_ag_in_hb;
+      g_ag_ok    = g_ag_in_ok;
+      memcpy(g_ag_q, g_ag_in_q, sizeof(g_ag_q));
+      memcpy(g_ag_a, g_ag_in_a, sizeof(g_ag_a));
+      pthread_mutex_unlock(&g_ag_lock);
+
+      g_ag_t0      = now;
+      g_ag_hide_at = 0;
+      g_ag_last_s  = -1;
+
+      if (g_ag_hb && g_ag_state == AG_REPLIED)
+        {
+          g_ag_min   = wall_min();
+          g_ag_alert = !g_ag_ok;
+          if (g_ag_ok)
+            {
+              g_ag_hide_at = now + AG_OK_SHOW_MS;
+            }
+          else
+            {
+              memcpy(g_ag_txt, g_ag_a, sizeof(g_ag_txt));
+            }
+
+          update_bell();
+        }
+      else if (g_ag_hb && g_ag_state != AG_WORKING)
+        {
+          g_ag_state = AG_IDLE;        /* a failed heartbeat is not news */
+        }
+      else if (g_ag_state != AG_WORKING)
+        {
+          g_ag_hide_at = now + AG_REPLY_SHOW_MS;
+        }
+
+      g_ag_shown = (g_ag_state != AG_IDLE);
+      if (g_ag_toast != NULL && !g_ag_shown)
+        {
+          lv_obj_add_flag(g_ag_toast, LV_OBJ_FLAG_HIDDEN);
+        }
+
+      ag_render(now);
+    }
+  else if (g_ag_state == AG_WORKING)
+    {
+      if (now - g_ag_t0 > AG_STUCK_MS)
+        {
+          /* no end-of-turn ever came (a path in agent_loop that drops the
+           * message without replying): stop counting forever */
+
+          g_ag_state   = g_ag_hb ? AG_IDLE : AG_FAILED;
+          g_ag_shown   = (g_ag_state != AG_IDLE);
+          g_ag_hide_at = now + AG_REPLY_SHOW_MS;
+          if (g_ag_toast != NULL && !g_ag_shown)
+            {
+              lv_obj_add_flag(g_ag_toast, LV_OBJ_FLAG_HIDDEN);
+            }
+
+          ag_render(now);
+        }
+      else if (!g_ag_hb && (int)((now - g_ag_t0) / 1000) != g_ag_last_s)
+        {
+          ag_render(now);
+        }
+    }
+
+  if (g_ag_hide_at != 0 && now >= g_ag_hide_at)
+    {
+      g_ag_hide_at = 0;
+      g_ag_shown   = 0;
+      if (g_ag_toast != NULL)
+        {
+          lv_obj_add_flag(g_ag_toast, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+}
+
+/* The agent's set_meal tool rewrites a pet from its own thread.  When it has,
+ * redraw My Pets, and fold the change into an open Edit dialog so a later Save
+ * cannot quietly put the old time back.  A slot the owner (or the voice
+ * dialog) already changed in the dialog keeps that value. */
+static void ident_poll(void)
+{
+  unsigned gen = velapaw_identity_gen();
+
+  if (gen == g_ident_seen)
+    {
+      return;
+    }
+
+  g_ident_seen = gen;
+
+  if (g_edit_pet >= 0)
+    {
+      const struct velapaw_pet *p = velapaw_identity_get(g_edit_pet);
+
+      if (p != NULL)
+        {
+          for (int k = 0; k < VELAPAW_MAX_MEALS; k++)
+            {
+              if (g_edit_meal[k] == g_edit_orig[k])
+                {
+                  g_edit_meal[k] = p->meal_min[k];
+                }
+
+              g_edit_orig[k] = p->meal_min[k];
+            }
+
+          refresh_edit();
+        }
+    }
+
+  refresh_pets();
+}
 
 /* Translated tab name for the header breadcrumb. */
 static const char *tab_name(uint32_t t)
@@ -3493,6 +4650,10 @@ static void ui_build(void)
   lv_obj_add_flag(g_kb, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_event_cb(g_kb, kb_cb, LV_EVENT_ALL, NULL);
 
+  /* agent toast: a child of the root, created after the tabview so it draws
+   * over the tabs, but under the modals and keyboard on lv_layer_top() */
+  ag_build(col);
+
   refresh_enroll();
   lv_label_set_text_fmt(g_count, T(S_ENROLLED_COUNT_FMT), velapaw_identity_count());
   lv_label_set_text_fmt(g_metrics, T(S_BACKEND_FMT), g_be->name,
@@ -3515,19 +4676,27 @@ void velapaw_ui_run(void)
     _fl = fcntl(STDERR_FILENO, F_GETFL, 0);
     if (_fl >= 0) fcntl(STDERR_FILENO, F_SETFL, _fl | O_NONBLOCK); }
 
+  g_boot_rr = esp32s3_reset_reasons(0);   /* health.log, and the start tab */
+
   lv_init();
   lv_nuttx_dsc_init(&info);
   lv_nuttx_init(&info, &result);
   if (result.disp == NULL)
     {
-      printf("velapaw/ui: LVGL display init failed\n");
+      uprintf("velapaw/ui: LVGL display init failed\n");
       return;
     }
-  printf("velapaw/ui: LVGL ready; touch indev %s\n",
-         result.indev ? "ok" : "MISSING");
+  uprintf("velapaw/ui: LVGL ready; touch indev %s\n",
+          result.indev ? "ok" : "MISSING");
 
   lv_obj_t *scr = lv_screen_active();
   lv_obj_set_style_bg_color(scr, lv_color_hex(COL_BG), LV_PART_MAIN);
+
+  g_img565 = malloc(VELAPAW_FRAME_W * VELAPAW_FRAME_H * sizeof(*g_img565));
+  if (g_img565 == NULL)
+    {
+      uprintf("velapaw/ui: frame buffer alloc failed\n");
+    }
 
   g_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
   g_dsc.header.cf = LV_COLOR_FORMAT_RGB565;
@@ -3535,23 +4704,23 @@ void velapaw_ui_run(void)
   g_dsc.header.h = VELAPAW_FRAME_H;
   g_dsc.header.stride = VELAPAW_FRAME_W * 2;
   g_dsc.data = (const uint8_t *)g_img565;
-  g_dsc.data_size = sizeof(g_img565);
+  g_dsc.data_size = VELAPAW_FRAME_W * VELAPAW_FRAME_H * sizeof(*g_img565);
 
   /* ---- init pipeline ONCE (before building tabs that read state, and before
    *      ui_build() which may run again on a language switch) ---- */
   g_be = velapaw_infer_active();
   velapaw_camera_open();
-  printf("velapaw: '%s' backend init...\n", g_be->name);
+  uprintf("velapaw: '%s' backend init...\n", g_be->name);
   { int _ir = g_be->init();
-    printf("velapaw: init ret=%d arena=%lu KB\n", _ir,
-           (unsigned long)(g_be->arena_bytes() / 1024)); }
+    uprintf("velapaw: init ret=%d arena=%lu KB\n", _ir,
+            (unsigned long)(g_be->arena_bytes() / 1024)); }
   /* spin up the background inference worker (keeps Invoke off the UI thread) */
   { pthread_t _wt; pthread_attr_t _wa; pthread_attr_init(&_wa);
     pthread_attr_setstacksize(&_wa, 32768);
     if (pthread_create(&_wt, &_wa, recog_worker, NULL) == 0)
       pthread_detach(_wt);
     pthread_attr_destroy(&_wa);
-    printf("velapaw: recog worker started\n"); }
+    uprintf("velapaw: recog worker started\n"); }
 #ifdef CONFIG_VELAPAW_VOICE
   /* Same 32 KB stack as the vision worker, and for the same reason: this one
    * also runs a TFLM Invoke, and 32 KB is the figure that has been proven on
@@ -3566,7 +4735,7 @@ void velapaw_ui_run(void)
     else
       g_voice_fail = 1;
     pthread_attr_destroy(&_va);
-    printf("velapaw: voice worker started\n"); }
+    uprintf("velapaw: voice worker started\n"); }
 #endif
   velapaw_identity_init();
   velapaw_store_init();
@@ -3595,16 +4764,37 @@ void velapaw_ui_run(void)
    * pushed up to it exactly once, a board already ahead is left alone, and
    * each rebuild advances the floor. Bump VELAPAW_CLOCK_ANCHOR when the
    * board comes back reading an old date. */
-#define VELAPAW_CLOCK_ANCHOR 1788393600L           /* 2026-09-03 00:00 */
+#define VELAPAW_CLOCK_ANCHOR 1791676800L           /* 2026-10-11 00:00 */
   { struct timespec _ts;
     clock_gettime(CLOCK_REALTIME, &_ts);
     if (_ts.tv_sec < VELAPAW_CLOCK_ANCHOR)
       {
-        _ts.tv_sec  = VELAPAW_CLOCK_ANCHOR + 8 * 3600;   /* 08:00 that day */
+        /* Below the floor means the RTC lost the time -- on this board, with
+         * no battery, that is every unplug -- and nothing says for how long.
+         * Pinning every such boot to the anchor day made each power-up the
+         * same day as the last run: its meals read as eaten (fed.bin) and
+         * its grams as today's (the daily limit), so a pet could miss a whole
+         * day.  Start the day after the last one the store knows instead.  A
+         * replug in the middle of a day may serve a meal again; none is
+         * missed. */
+        long day  = VELAPAW_CLOCK_ANCHOR / 86400;
+        long last = velapaw_store_hist_day();
+
+        if (last >= day && last < day + 3660)
+          {
+            day = last + 1;
+          }
+
+        _ts.tv_sec  = (time_t)day * 86400 + 8 * 3600;   /* 08:00 that day */
         _ts.tv_nsec = 0;
         clock_settime(CLOCK_REALTIME, &_ts);
         board_rtc_settime(_ts.tv_sec);
+        g_clock_lost = 1;
+        velapaw_store_sync_day();  /* store_init ran on the lost clock */
+        uprintf("velapaw: clock lost, starting a new day at 08:00\n");
       } }
+  fed_load();              /* after the clock: a skip is kept only same-day */
+  g_judged_hd = velapaw_store_hist_day();   /* no day has ended yet */
   g_view = 0;
   velapaw_camera_mock_set_scene(g_view);
 
@@ -3612,6 +4802,14 @@ void velapaw_ui_run(void)
 
   g_scr = scr;
   ui_build();              /* build the whole tree in the current language */
+
+  /* After a reset nobody is there to open Recognize, so start on it.  A
+   * power-on or a USB reset (flashing, plugging in) still starts on Enroll. */
+  if (g_boot_rr != 0x01 && g_boot_rr != 0x15 && g_boot_rr != 0x16 &&
+      velapaw_identity_count() > 0)
+    {
+      lv_tabview_set_active(g_tv, 1, LV_ANIM_OFF);
+    }
 
   long last_recog = 0;
   long last_frame = 0;
@@ -3621,20 +4819,75 @@ void velapaw_ui_run(void)
   cam_grab(&frame);
   show_frame(&frame);
 
+  /* Recognize: one pet handled (or two tries with nobody known) puts it to
+   * rest; see the re-arm block at the end of the loop for what wakes it. */
+  int     recog_done    = 0;
+  int     recog_tries   = 0;
+  uint8_t scene_ref[16] = { 0 };  /* the picture when it went to rest */
+  uint8_t sig[16]       = { 0 };
+  int     scene_ref_ok  = 0;
+  int     scene_changed = 0;
+  long    done_at       = 0;
+  long    rearm_gap     = 0;
+  long    miss_gap      = REARM_MISS_MS;
+
+  g_ui_beat = mono_ms();
+  stall_start();
+
   while (1)
     {
+      g_ui_beat = mono_ms();            /* the stall monitor's heartbeat */
+      g_ui_at   = "lvgl";
       lv_timer_handler();
 
       uint32_t tab = lv_tabview_get_tab_active(g_tv);
       static uint32_t crumb_tab = 0;
       static int last_clock_min = -1;
+      static long last_day = -1;
+      g_ui_tab = tab;
       /* header shows the wall clock; repaint when the minute (or tab) changes */
       { int cm = wall_min();
         if (cm != last_clock_min)
           {
+            long day_now = wall_day();
+
             last_clock_min = cm;
             lv_label_set_text_fmt(g_crumb, T(S_CRUMB_FMT),
                                   cm / 60, cm % 60, tab_name(crumb_tab));
+
+            /* Midnight.  The store's day window waited for the next feed to
+             * roll, so the first meal was checked against yesterday's grams,
+             * and a meal skipped yesterday stayed skipped. */
+            if (day_now != last_day)
+              {
+                g_ui_at = "day";
+                velapaw_store_sync_day();
+                if (last_day >= 0)
+                  {
+                    /* A day ended with the board running: judge it before its
+                     * skips are cleared.  Two or more at once is the clock
+                     * jumping, not a day anyone watched: no verdict. */
+                    long hd = velapaw_store_hist_day();
+
+                    if (hd != g_judged_hd)
+                      {
+                        day_judge(hd == g_judged_hd + 1);
+                      }
+
+                    memset(g_meal_skipped, 0, sizeof(g_meal_skipped));
+                    fed_save();
+                    refresh_pets();
+                    refresh_trends();
+                  }
+
+                last_day = day_now;
+              }
+
+            /* a meal fell due: redraw its % and tell the agent */
+            if (plan_sync())
+              {
+                refresh_pets();
+              }
           } }
       if (tab != last_tab)
         {
@@ -3651,6 +4904,7 @@ void velapaw_ui_run(void)
             }
         }
 
+      g_ui_at = "events";
       ui_event_t ev = g_evt;
       g_evt = EV_NONE;
       if (ev == EV_VIEW)
@@ -3672,6 +4926,7 @@ void velapaw_ui_run(void)
       else if (ev == EV_NEXTDAY)
         {
           velapaw_store_roll_day();
+          day_judge(1);                   /* the demo day ended: judge it first */
           for (int i = 0; i < VELAPAW_MAX_PETS; i++)
             {
               for (int k = 0; k < VELAPAW_MAX_MEALS; k++)
@@ -3680,6 +4935,7 @@ void velapaw_ui_run(void)
                   g_meal_skipped[i][k] = 0;   /* skips don't carry over        */
                 }
             }
+          fed_save();
           refresh_pets();
           refresh_trends();
         }
@@ -3803,7 +5059,8 @@ void velapaw_ui_run(void)
         }
 
       int idle_enroll = (tab == 0 && now - g_last_touch > ENROLL_IDLE_MS);
-      int interval    = (tab == 1 && g_cand == VELAPAW_PET_UNKNOWN)
+      int interval    = (tab == 1 &&
+                         (g_cand == VELAPAW_PET_UNKNOWN || recog_done))
                         ? FRAME_IDLE_MS : FRAME_INTERVAL_MS;
 
       if (idle_enroll != g_enroll_paused)
@@ -3833,24 +5090,37 @@ void velapaw_ui_run(void)
           cam_grab(&frame);
           show_frame(&frame);
           last_frame = now;
+
+          /* at rest: has anything moved since recognition last looked? */
+
+          if (tab == 1 && recog_done && scene_ref_ok &&
+              scene_sig(&frame, sig) == 0 && scene_moved(scene_ref, sig))
+            {
+              scene_changed = 1;
+            }
         }
 
       /* On-demand recognition: infer on the Recognize tab until a known pet is
-       * identified + handled, then STOP until the user re-enters the tab. A
-       * feeder recognizes on approach, not continuously; this bounds inference
-       * count per visit to a handful and stays well clear of the sustained-
-       * inference limit (the long INT8 Invoke on PSRAM is the scarce path). */
-      static int recog_done = 0;
-      static int recog_tries = 0;
+       * identified + handled, or two tries find nobody known, then rest until
+       * the re-arm block below wakes it. A feeder recognizes on approach, not
+       * continuously; this bounds inference count per visit to a handful and
+       * stays well clear of the sustained-inference limit (the long INT8
+       * Invoke on PSRAM is the scarce path). recog_done and recog_tries are
+       * declared above the loop. */
+      g_ui_at = "recog";
       if (tab != 1)
         {
           recog_done = 0; recog_tries = 0;        /* re-arm on leave */
-          g_fed_visit = VELAPAW_PET_UNKNOWN;      /* returning = a NEW visit: allow
-                                                   * another feed. The per-pet cooldown
-                                                   * (g_last_fed + cooldown_s) still gates
-                                                   * rapid double-feeds. Needed because
-                                                   * recog_done stops the "pet left" path
-                                                   * that used to reset this. */
+          scene_ref_ok  = 0;
+          scene_changed = 0;
+          miss_gap      = REARM_MISS_MS;
+          g_fed_visit = VELAPAW_PET_UNKNOWN;      /* returning = a NEW visit.
+                                                   * Back-to-back meals are spaced
+                                                   * by FEED_GAP_MIN (see
+                                                   * feed_wait_min); the
+                                                   * g_last_fed cooldown this
+                                                   * comment used to promise was
+                                                   * never read anywhere. */
           /* drop a stale RECOGNIZE result -- but never an enroll capture that
            * is still waiting to be collected (Enroll is tab 0, i.e. tab != 1) */
           if (g_inf_state == 3 && !g_cap_pending) g_inf_state = 0;
@@ -3875,6 +5145,8 @@ void velapaw_ui_run(void)
               g_inf_mode  = 0;       /* recognize: embed + match */
               g_inf_state = 1;
               recog_tries++;
+              scene_ref_ok  = (scene_sig(&frame, scene_ref) == 0);
+              scene_changed = 0;
             }
           else if (g_inf_state == 3)
             {
@@ -3938,8 +5210,16 @@ void velapaw_ui_run(void)
                         {
                           int bcls = -1;
                           float bconf = 0.0f;
-                          if (velapaw_infer_bcs(&frame, &bcls, &bconf) == 0 &&
-                              bcls >= 0 && bcls < 3)
+                          int brc;
+
+                          /* under the TFLM lock like every other Invoke: the
+                           * voice worker's KWS shares the ESP-NN kernels */
+                          g_ui_at = "bcs";
+                          pthread_mutex_lock(&g_tflm_lock);
+                          brc = velapaw_infer_bcs(&frame, &bcls, &bconf);
+                          pthread_mutex_unlock(&g_tflm_lock);
+                          g_ui_at = "recog";
+                          if (brc == 0 && bcls >= 0 && bcls < 3)
                             {
                               g_bcs_votes[bcls]++;
                               g_bcs_nvotes++;
@@ -3980,15 +5260,32 @@ void velapaw_ui_run(void)
 
                       if (due)
                         {
+                          int rest = feed_wait_min(m.id, today, nowm);
+
                           if (velapaw_store_today_total(m.id) >=
                               pet->daily_limit_g)
                             {
+                              /* closed with nothing served: My Pets shows it
+                               * as skipped, not as eaten */
                               g_meal_fed_day[m.id][slot] = today;  /* don't re-try */
+                              g_meal_fed_min[m.id][slot] = nowm;
+                              g_meal_fed_g[m.id][slot]   = 0;
+                              fed_save();
                               lv_obj_set_style_text_color(g_sub,
                                   lv_color_hex(COL_COOL), 0);
                               lv_label_set_text_fmt(g_sub, T(S_LIMIT_HIT_FMT),
                                   velapaw_store_today_total(m.id),
                                   pet->daily_limit_g);
+                            }
+                          else if (rest > 0)
+                            {
+                              /* it has just eaten another meal: this one waits */
+                              int at = nowm + rest;
+
+                              lv_obj_set_style_text_color(g_sub,
+                                  lv_color_hex(COL_COOL), 0);
+                              lv_label_set_text_fmt(g_sub, T(S_NEXT_MEAL_FMT),
+                                  (at / 60) % 24, at % 60);
                             }
                           else
                             {
@@ -3997,17 +5294,26 @@ void velapaw_ui_run(void)
                                   velapaw_store_today_total(m.id);
                               int amount = (pet->portion_g < remaining)
                                            ? pet->portion_g : remaining;
+
+                              /* Mark and save the meal before the motor turns: if
+                               * anything after this hangs and the board is reset,
+                               * the meal must not be served twice. */
+                              g_last_fed[m.id]           = mono_ms() / 1000;
+                              g_meal_fed_day[m.id][slot] = today;  /* this meal done */
+                              g_meal_fed_min[m.id][slot] = nowm;   /* ...at this time */
+                              g_meal_fed_g[m.id][slot]   = amount; /* ...this much */
+                              fed_save();
+                              g_ui_at = g_at_feed;
                               velapaw_feeder_dispense(amount);
+                              g_ui_at = "store";
+                              plan_push();               /* the feed's status.md counts this meal */
                               { struct timespec _w;
                                 clock_gettime(CLOCK_REALTIME, &_w);
                                 struct velapaw_feed_event ev2 =
                                   { m.id, (time_t)_w.tv_sec,   /* real wall-clock time */
                                     amount, m.score, g_be->name };
                                 velapaw_store_log_feeding(&ev2); }
-                              g_last_fed[m.id]           = mono_ms() / 1000;
-                              g_meal_fed_day[m.id][slot] = today;  /* this meal done */
-                              g_meal_fed_min[m.id][slot] = nowm;   /* ...at this time */
-                              g_meal_fed_g[m.id][slot]   = amount; /* ...this much */
+                              g_ui_at = "recog";
                               lv_obj_set_style_text_color(g_sub,
                                   lv_color_hex(COL_FED), 0);
                               lv_label_set_text_fmt(g_sub, T(S_FED_FMT), amount,
@@ -4035,21 +5341,64 @@ void velapaw_ui_run(void)
                               velapaw_store_today_total(m.id));
                         }
 
-                      /* Identified + handled: rest until re-armed (leave/return
-                       * to the Recognize tab) so inference count stays bounded. */
+                      /* Identified + handled: rest until the re-arm block
+                       * below wakes it, so inference count stays bounded. */
                       recog_done = 1;
+                      g_rec_hit++;
+                      done_at   = mono_ms();
+                      rearm_gap = REARM_HIT_MS;
+                      miss_gap  = REARM_MISS_MS;
                     }
                 }
-              /* No stable ID after a couple of tries -> stop (bounded, no loop). */
+              /* No stable ID after a couple of tries -> rest too, and wait a
+               * little longer each time before looking again. */
               if (!recog_done && recog_tries >= 2)
                 {
                   recog_done = 1;
+                  g_rec_miss++;
+                  done_at   = mono_ms();
+                  rearm_gap = miss_gap;
+                  miss_gap  = (miss_gap * 2 > REARM_MISS_MAX_MS)
+                              ? REARM_MISS_MAX_MS : miss_gap * 2;
                   lv_obj_set_style_text_color(g_status, lv_color_hex(COL_DIM), 0);
-                  lv_label_set_text(g_status, T(S_NO_STABLE));
+                  lv_label_set_text(g_status, T(S_POINT_AT_PET));
                 }
 
               g_inf_state = 0;        /* worker idle; allow the next capture+infer */
               last_recog = mono_ms();
+            }
+        }
+
+      /* Recognition rests once a pet is handled or nobody is there, and wakes
+       * itself again: at a tap, when the picture changes, and once a minute
+       * while a meal is due.  It used to stay asleep until the owner left the
+       * tab and came back, so a pet that arrived later was never seen. */
+      if (tab == 1 && recog_done && g_inf_state == 0 && !g_cap_pending)
+        {
+          long since = now - done_at;
+          int  go    = 0;
+          int  tries = 0;
+
+          if (g_last_touch > done_at && !ui_touch_active())
+            {
+              go = 1;                       /* the owner tapped the screen */
+            }
+          else if (scene_changed && since >= rearm_gap)
+            {
+              go = 1;                       /* something moved in front of it */
+            }
+          else if (since >= MEAL_POLL_MS && meal_window_open())
+            {
+              go    = 1;                    /* a meal is due: one look */
+              tries = 1;
+            }
+
+          if (go)
+            {
+              recog_done    = 0;
+              recog_tries   = tries;
+              scene_changed = 0;
+              last_recog    = 0;
             }
         }
 
@@ -4063,6 +5412,7 @@ void velapaw_ui_run(void)
        * identified and handled, but that is exactly when the owner is most
        * likely to speak, so the microphone stays open for the whole visit. */
 
+      g_ui_at = "voice";
       g_voice_run = ((g_vs.state != VS_IDLE) ||
                      (tab == 1 && !g_voice_fail && !g_voice_dismissed)) ? 1 : 0;
 
@@ -4098,6 +5448,11 @@ void velapaw_ui_run(void)
           voice_idle_text();
         }
 #endif
+
+      /* the ai_agent, mirrored: its toast, and any meal time it changed */
+      g_ui_at = "agent";
+      ag_poll(now);
+      ident_poll();
 
       usleep(20000);
     }

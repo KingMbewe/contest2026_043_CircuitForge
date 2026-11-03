@@ -1,0 +1,89 @@
+diff --git a/examples/lvgldemo/lvgldemo.c b/examples/lvgldemo/lvgldemo.c
+index 6c8c102ea..8c807e5b2 100644
+--- a/examples/lvgldemo/lvgldemo.c
++++ b/examples/lvgldemo/lvgldemo.c
+@@ -24,6 +24,8 @@
+ 
+ #include <nuttx/config.h>
+ #include <unistd.h>
++#include <string.h>
++#include <stdio.h>
+ #include <sys/boardctl.h>
+ 
+ #include <lvgl/lvgl.h>
+@@ -108,6 +110,57 @@ static void lv_nuttx_uv_loop(uv_loop_t *loop, lv_nuttx_result_t *result)
+  *
+  ****************************************************************************/
+ 
++
++/* ---- VelaPaw first screen ---- */
++static lv_obj_t *g_status;
++static int g_feeds;
++static void velapaw_feed_cb(lv_event_t *e)
++{
++  char buf[48];
++  (void)e;
++  g_feeds++;
++  snprintf(buf, sizeof(buf), "Fed 20 g   (today: %d)", g_feeds);
++  lv_label_set_text(g_status, buf);
++}
++static void velapaw_create_ui(void)
++{
++  lv_obj_t *scr = lv_screen_active();
++  lv_obj_set_style_bg_color(scr, lv_color_hex(0x0d1526), 0);
++  lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
++
++  lv_obj_t *title = lv_label_create(scr);
++  lv_label_set_text(title, "VelaPaw");
++  lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
++  lv_obj_set_style_text_color(title, lv_color_hex(0x4d9dff), 0);
++  lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 16);
++
++  lv_obj_t *sub = lv_label_create(scr);
++  lv_label_set_text(sub, "Smart Pet Feeder");
++  lv_obj_set_style_text_color(sub, lv_color_hex(0x98a2b3), 0);
++  lv_obj_align(sub, LV_ALIGN_TOP_MID, 0, 44);
++
++  lv_obj_t *meal = lv_label_create(scr);
++  lv_label_set_text(meal, "Next meal:  18:00     Portion:  20 g");
++  lv_obj_set_style_text_color(meal, lv_color_hex(0xd0d5dd), 0);
++  lv_obj_align(meal, LV_ALIGN_TOP_MID, 0, 88);
++
++  lv_obj_t *btn = lv_button_create(scr);
++  lv_obj_set_size(btn, 220, 82);
++  lv_obj_align(btn, LV_ALIGN_CENTER, 0, 28);
++  lv_obj_set_style_bg_color(btn, lv_color_hex(0x2e7d32), 0);
++  lv_obj_set_style_radius(btn, 12, 0);
++  lv_obj_add_event_cb(btn, velapaw_feed_cb, LV_EVENT_CLICKED, NULL);
++  lv_obj_t *bl = lv_label_create(btn);
++  lv_label_set_text(bl, "Feed Now");
++  lv_obj_set_style_text_font(bl, &lv_font_montserrat_20, 0);
++  lv_obj_center(bl);
++
++  g_status = lv_label_create(scr);
++  lv_label_set_text(g_status, "Tap the button to feed your pet");
++  lv_obj_set_style_text_color(g_status, lv_color_hex(0x98a2b3), 0);
++  lv_obj_align(g_status, LV_ALIGN_BOTTOM_MID, 0, -16);
++}
++
+ int main(int argc, FAR char *argv[])
+ {
+   lv_nuttx_dsc_t info;
+@@ -151,12 +204,13 @@ int main(int argc, FAR char *argv[])
+       return 1;
+     }
+ 
+-  if (!lv_demos_create(&argv[1], argc - 1))
++  if (argc > 1 && strcmp(argv[1], "velapaw") == 0)
++    {
++      velapaw_create_ui();
++    }
++  else if (!lv_demos_create(&argv[1], argc - 1))
+     {
+       lv_demos_show_help();
+-
+-      /* we can add custom demos here */
+-
+       goto demo_end;
+     }
+ 

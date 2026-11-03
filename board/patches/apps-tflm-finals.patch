@@ -1,0 +1,88 @@
+diff --git a/mlearning/tflite-micro/Makefile b/mlearning/tflite-micro/Makefile
+index dbe1c7b30..16304e955 100644
+--- a/mlearning/tflite-micro/Makefile
++++ b/mlearning/tflite-micro/Makefile
+@@ -55,6 +55,7 @@ COMMON_FLAGS += -Wno-undef
+ COMMON_FLAGS += -Wno-unused-variable
+ COMMON_FLAGS += -DTFLITE_EMULATE_FLOAT
+ COMMON_FLAGS += -DTF_LITE_DISABLE_X86_NEON
++COMMON_FLAGS += -DTF_LITE_USE_GLOBAL_CMATH_FUNCTIONS
+ ifneq ($(CONFIG_TFLITEMICRO_DEBUG),)
+ COMMON_FLAGS += -DTF_LITE_SHOW_MEMORY_USE
+ COMMON_FLAGS += -DTF_LITE_USE_CTIME
+@@ -76,6 +77,16 @@ CXXSRCS += $(wildcard $(TFLM_DIR)/tensorflow/lite/micro/kernels/*.cc)
+ CXXSRCS += $(wildcard $(TFLM_DIR)/tensorflow/lite/micro/memory_planner/*.cc)
+ CXXSRCS += $(wildcard $(TFLM_DIR)/tensorflow/lite/micro/tflite_bridge/*.cc)
+ CXXSRCS += $(wildcard $(TFLM_DIR)/tensorflow/lite/schema/*.cc)
++
++# TFLM signal library -- Window/FftAutoScale/Rfft/Energy/FilterBank*/PCAN.
++# Required by the micro_speech audio frontend graph (VelaPaw voice).
++# NOTE: *.cc does not descend into signal/micro/kernels/xtensa/, which is
++# intentional -- those are HiFi-DSP duplicates of two generic kernels.
++# signal/tensorflow_core/ is host TensorFlow and must stay out.
++CXXSRCS += $(wildcard $(TFLM_DIR)/signal/micro/kernels/*.cc)
++CXXSRCS += $(wildcard $(TFLM_DIR)/signal/src/*.cc)
++CXXSRCS += $(wildcard $(TFLM_DIR)/signal/src/kiss_fft_wrappers/*.cc)
++
+ CXXSRCS := $(filter-out %test.cc, $(CXXSRCS))
+ 
+ ifneq ($(CONFIG_ETHOSU),)
+@@ -110,7 +121,31 @@ PRIORITY  = $(CONFIG_TFLITEMICRO_TOOL_PRIORITY)
+ STACKSIZE = $(CONFIG_TFLITEMICRO_TOOL_STACKSIZE)
+ endif
+ 
++# esp-nn (ESP32-S3 LX7 SIMD kernels) --- auto-added
++ESP_NN_DIR := $(APPDIR)/mlearning/esp-nn
++ifneq ($(wildcard $(ESP_NN_DIR)/include/esp_nn.h),)
++COMMON_FLAGS += -DESP_NN=1 -DCONFIG_NN_OPTIMIZED -mlongcalls
++COMMON_FLAGS += ${INCDIR_PREFIX}$(ESP_NN_DIR)/include
++COMMON_FLAGS += ${INCDIR_PREFIX}$(ESP_NN_DIR)/src/common
++COMMON_FLAGS += ${INCDIR_PREFIX}$(ESP_NN_DIR)/shim
++AFLAGS += -mlongcalls -I$(ESP_NN_DIR)/src/common -I$(ESP_NN_DIR)/include
++ESP_NN_BASE := $(notdir $(wildcard $(TFLM_DIR)/tensorflow/lite/micro/kernels/esp_nn/*.cc))
++CXXSRCS := $(filter-out $(addprefix $(TFLM_DIR)/tensorflow/lite/micro/kernels/, $(ESP_NN_BASE)), $(CXXSRCS))
++CXXSRCS := $(filter-out $(addprefix $(TFLM_DIR)/tensorflow/lite/micro/kernels/cmsis_nn/, $(ESP_NN_BASE)), $(CXXSRCS))
++CXXSRCS += $(wildcard $(TFLM_DIR)/tensorflow/lite/micro/kernels/esp_nn/*.cc)
++CSRCS += $(filter-out %esp32p4.c %esp32s3.c,$(wildcard $(ESP_NN_DIR)/src/*/*.c))
++endif
+ CFLAGS   += ${COMMON_FLAGS}
++CXXFLAGS += -include $(APPDIR)/mlearning/tflite-micro/float_shim.h
++CXXFLAGS += -fpermissive
+ CXXFLAGS += ${COMMON_FLAGS}
+ 
++# CRITICAL -- signal/micro/kernels each hold a function-local static.  Without
++# this, g++ emits __cxa_guard_acquire around them, and that call never returns
++# on this target: AllocateTensors() hangs inside the first frontend kernel with
++# no crash dump.  Same flag, same reason, as apps/examples/velapaw/Makefile.
++# Not header-visible -- codegen only -- so mixing it with objects built without
++# it is safe.
++CXXFLAGS += -fno-threadsafe-statics
++
+ include $(APPDIR)/Application.mk
+diff --git a/mlearning/tflite-micro/float_shim.h b/mlearning/tflite-micro/float_shim.h
+new file mode 100644
+index 000000000..ab5a346c8
+--- /dev/null
++++ b/mlearning/tflite-micro/float_shim.h
+@@ -0,0 +1,21 @@
++#ifndef VELAPAW_FLOAT_SHIM_H
++#define VELAPAW_FLOAT_SHIM_H
++#include <math.h>
++namespace std {
++  inline float exp(float x){return expf(x);}
++  inline float sqrt(float x){return sqrtf(x);}
++  inline float log(float x){return logf(x);}
++  inline float log2(float x){return log2f(x);}
++  inline float sin(float x){return sinf(x);}
++  inline float cos(float x){return cosf(x);}
++  inline float tanh(float x){return tanhf(x);}
++  inline float round(float x){return roundf(x);}
++  inline float floor(float x){return floorf(x);}
++  inline float ceil(float x){return ceilf(x);}
++  inline float fabs(float x){return fabsf(x);}
++  inline float fmax(float a,float b){return fmaxf(a,b);}
++  inline float fmin(float a,float b){return fminf(a,b);}
++  inline float fmod(float a,float b){return fmodf(a,b);}
++  inline float expm1(float x){return expm1f(x);}
++}
++#endif

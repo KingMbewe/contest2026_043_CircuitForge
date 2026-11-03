@@ -18,6 +18,7 @@
 #include <nuttx/config.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "hal/camera.h"
@@ -25,7 +26,7 @@
 /* Provided by the board (flat build) */
 extern int board_ov5640_capture(uint8_t **buf, int *w, int *h);
 
-static uint8_t g_framebuf[VELAPAW_FRAME_BYTES];   /* 128x128x3, black until 1st frame */
+static uint8_t *g_framebuf;   /* 128x128x3, heap/PSRAM-backed; black until 1st frame */
 
 /* Live camera ignores scene selection. */
 void velapaw_camera_mock_set_scene(int scene_id)
@@ -38,6 +39,15 @@ int velapaw_camera_open(void)
   /* Sensor + capture engine were configured by the board at boot
    * (board_ov5640_init). Nothing to do here.
    */
+  if (g_framebuf == NULL)
+    {
+      g_framebuf = malloc(VELAPAW_FRAME_BYTES);
+      if (g_framebuf != NULL)
+        {
+          memset(g_framebuf, 0, VELAPAW_FRAME_BYTES);
+        }
+    }
+
   printf("velapaw/cam: OV5640 backend (board LCD_CAM capture)\n");
   return 0;
 }

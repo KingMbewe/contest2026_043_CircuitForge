@@ -9,11 +9,15 @@
  ****************************************************************************/
 
 #include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <time.h>
+#include <unistd.h>
+#include <sys/ioctl.h>
 #include <sys/stat.h>
 #include "store/store.h"
 #include "identity/identity.h"
@@ -25,6 +29,13 @@ static int g_day_g[VELAPAW_MAX_PETS][DAYS];      /* grams per day */
 static int g_day_m[VELAPAW_MAX_PETS][DAYS];      /* meals per day */
 static int g_bcs[VELAPAW_MAX_PETS];              /* last BCS: 0/1/2, -1 none */
 
+/* RAM only, see store.h: today's plan and the part of it due (pushed by the
+ * UI), and the % of plan the last day that ended with the board running got
+ * (-1 none). */
+static int g_plan_g[VELAPAW_MAX_PETS];
+static int g_due_g[VELAPAW_MAX_PETS];
+static int g_end_pct[VELAPAW_MAX_PETS];
+
 /* Civil day number (see vp_days_from_civil) that owns slot TODAY, or -1
  * when it is not known yet: an unset clock, or a pre-VP02 history file.
  */
@@ -33,6 +44,49 @@ static long g_hist_day = -1;
 static int valid(velapaw_pet_id_t id)
 {
   return id >= 0 && id < VELAPAW_MAX_PETS;
+}
+
+/* A console line that is dropped, not waited for, when the host has stopped
+ * reading.  Same rule as con_ok() in ui/ui_lvgl.c, which explains why a
+ * plain printf can block the UI thread for good.
+ */
+static void vp_say(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+static void vp_say(const char *fmt, ...)
+{
+  char line[128];
+  va_list ap;
+  int n;
+
+  va_start(ap, fmt);
+  n = vsnprintf(line, sizeof(line), fmt, ap);
+  va_end(ap);
+  if (n <= 0)
+    {
+      return;
+    }
+
+  if (n > (int)sizeof(line) - 1)
+    {
+      n = sizeof(line) - 1;
+    }
+
+#ifdef FIONSPACE
+  for (int i = 0; i < 5; i++)
+    {
+      int room;
+
+      if (ioctl(STDOUT_FILENO, FIONSPACE, (unsigned long)(uintptr_t)&room) < 0
+          || room >= n)
+        {
+          write(STDOUT_FILENO, line, n);
+          return;
+        }
+
+      usleep(10000);
+    }
+#else
+  write(STDOUT_FILENO, line, n);
+#endif
 }
 
 /****************************************************************************
@@ -180,11 +234,11 @@ static void vp_history_load(void)
               g_bcs[i] = -1;
             }
 
-          printf("velapaw/store: %s corrupt, history reset\n", VP_HISTORY);
+          vp_say("velapaw/store: %s corrupt, history reset\n", VP_HISTORY);
         }
       else
         {
-          printf("velapaw/store: history restored from %s\n", VP_HISTORY);
+          vp_say("velapaw/store: history restored from %s\n", VP_HISTORY);
         }
     }
 
@@ -231,19 +285,65 @@ static void vp_status_write(void)
       fprintf(f, "- today: %d g in %d meal(s)\n",
               velapaw_store_today_total(id), velapaw_store_today_meals(id));
       fprintf(f, "- last 7 days: %d g\n", velapaw_store_week_total(id));
-      fprintf(f, "- baseline (average of prior days): %d g/day\n",
-              velapaw_store_baseline_g(id));
-      fprintf(f, "- appetite today: %d%% of baseline\n",
-              velapaw_store_appetite_pct(id));
+      fprintf(f, "- today's plan: %d g (portion x meals not skipped, at most "
+                 "the daily limit)\n", g_plan_g[id]);
+
+      /* The skill's example measures today's grams against the baseline,
+       * which reads a pet that ate breakfast as a third of a day. */
+      if (g_due_g[id] > 0)
+        {
+          fprintf(f, "- appetite today: %d%% of the %d g due so far (judge "
+                     "appetite by this, not by the whole-day baseline)\n",
+                  velapaw_store_appetite_pct(id), g_due_g[id]);
+        }
+      else
+        {
+          fputs("- appetite today: no meal due yet\n", f);
+        }
+
+      int fed = velapaw_store_fed_days(id);
+      if (fed >= 3)
+        {
+          fprintf(f, "- baseline (average of %d fed days): %d g/day\n",
+                  fed, velapaw_store_baseline_g(id));
+        }
+      else
+        {
+          fprintf(f, "- baseline: not enough days yet (%d fed, needs 3)\n",
+                  fed);
+        }
       fprintf(f, "- body condition: %s\n",
               (b >= 0 && b <= 2) ? bcs_txt[b] : "not scored");
       fprintf(f, "- owner daily limit: %d g\n", p != NULL ? p->daily_limit_g : 0);
+      /* The agent has no tool that reads meal times -- it reads this file.
+       * Publishing them here is what makes a get_meal_schedule tool
+       * unnecessary, which keeps the tool-schema budget intact.
+       */
+
+      fputs("- scheduled meals:", f);
+
+      for (int k = 0; k < VELAPAW_MAX_MEALS; k++)
+        {
+          int m = (p != NULL) ? p->meal_min[k] : -1;
+
+          if (m < 0)
+            {
+              fputs(" off", f);
+            }
+          else
+            {
+              fprintf(f, " %02d:%02d", m / 60, m % 60);
+            }
+        }
+
+      fputs("\n", f);
 
       if (velapaw_store_alert_drop(id))
         {
-          fputs("- ALERT: intake on the last completed day was under half "
-                "the baseline, an early illness sign worth flagging to the "
-                "owner\n", f);
+          fprintf(f, "- ALERT: the last day that ended with the feeder "
+                     "running got only %d%% of its plan, under half: an "
+                     "early illness sign worth flagging to the owner\n",
+                  g_end_pct[id]);
         }
 
       fputs("\n", f);
@@ -418,7 +518,8 @@ int velapaw_store_init(void)
   memset(g_day_m, 0, sizeof(g_day_m));
   for (int i = 0; i < VELAPAW_MAX_PETS; i++)
     {
-      g_bcs[i] = -1;
+      g_bcs[i]     = -1;
+      g_end_pct[i] = -1;     /* no verdict: 0 would read as an alert */
     }
 
   vp_history_load();
@@ -450,11 +551,15 @@ int velapaw_store_log_feeding(const struct velapaw_feed_event *ev)
   g_day_g[ev->pet_id][TODAY] += ev->grams;
   g_day_m[ev->pet_id][TODAY] += 1;
 
-  printf("    [store] event pet=%d grams=%d score=%.2f model=%s\n",
-         ev->pet_id, ev->grams, ev->score, ev->model ? ev->model : "?");
+  /* Save first, print last.  The console can block for good when the host
+   * stops reading it, and a meal that was dispensed but never saved is fed
+   * again after the reset that follows. */
 
   vp_feedlog_append(ev);
   vp_persist();
+
+  vp_say("    [store] event pet=%d grams=%d score=%.2f model=%s\n",
+         ev->pet_id, ev->grams, ev->score, ev->model ? ev->model : "?");
   return 0;
 }
 
@@ -505,10 +610,31 @@ int velapaw_store_day_total(velapaw_pet_id_t id, int day_back)
   return g_day_g[id][TODAY - day_back];
 }
 
-/* average of the prior days (everything except today) */
-int velapaw_store_baseline_g(velapaw_pet_id_t id)
+/* Prior days with any food logged.  The window starts as zeros -- days
+ * before the pet was tracked, or a power-on with no feed -- and dividing by
+ * all 29 read 13 g as 0 g/day and a normal day as 975 %. */
+int velapaw_store_fed_days(velapaw_pet_id_t id)
 {
   if (!valid(id))
+    {
+      return 0;
+    }
+  int n = 0;
+  for (int d = 0; d < TODAY; d++)
+    {
+      if (g_day_g[id][d] > 0)
+        {
+          n++;
+        }
+    }
+  return n;
+}
+
+/* average of the prior days the pet was fed (everything except today) */
+int velapaw_store_baseline_g(velapaw_pet_id_t id)
+{
+  int fed = velapaw_store_fed_days(id);
+  if (fed == 0)
     {
       return 0;
     }
@@ -517,36 +643,52 @@ int velapaw_store_baseline_g(velapaw_pet_id_t id)
     {
       sum += g_day_g[id][d];
     }
-  return sum / (DAYS - 1);
+  return sum / fed;
 }
 
+/* Today against the meals due so far, not the whole day: a pet that ate
+ * breakfast is at 100 % after it, not a third. */
 int velapaw_store_appetite_pct(velapaw_pet_id_t id)
 {
-  int base = velapaw_store_baseline_g(id);
-  if (base <= 0)
+  if (!valid(id) || g_due_g[id] <= 0)
     {
       return 100;
     }
-  return g_day_g[id][TODAY] * 100 / base;
+  int pct = g_day_g[id][TODAY] * 100 / g_due_g[id];
+  return (pct > 100) ? 100 : pct;
 }
 
-/* Alert on the most recent *completed* day (yesterday = TODAY-1) vs the
- * baseline of the days before it: a >50% drop is the early illness sign.
- */
+/* The verdict on the last day that ended with the board running: under half
+ * its plan is the early illness sign.  A boot has none, so an unplug -- a
+ * new day on this battery-less board -- never raises one. */
 int velapaw_store_alert_drop(velapaw_pet_id_t id)
 {
-  if (!valid(id) || DAYS < 3)
+  return (valid(id) && g_end_pct[id] >= 0 && g_end_pct[id] < 50) ? 1 : 0;
+}
+
+int velapaw_store_set_plan(velapaw_pet_id_t id, int plan_g, int due_g)
+{
+  if (!valid(id) || (g_plan_g[id] == plan_g && g_due_g[id] == due_g))
     {
       return 0;
     }
-  int last = g_day_g[id][TODAY - 1];
-  int sum = 0;
-  for (int d = 0; d < TODAY - 1; d++)
+  g_plan_g[id] = plan_g;
+  g_due_g[id]  = due_g;
+  return 1;
+}
+
+void velapaw_store_judge_day(velapaw_pet_id_t id, int plan_g)
+{
+  if (valid(id))
     {
-      sum += g_day_g[id][d];
+      int pct = (plan_g > 0) ? g_day_g[id][TODAY - 1] * 100 / plan_g : -1;
+      g_end_pct[id] = (pct > 100) ? 100 : pct;
     }
-  int base = sum / (DAYS - 2);
-  return (base > 0 && last * 2 < base) ? 1 : 0;
+}
+
+int velapaw_store_last_day_pct(velapaw_pet_id_t id)
+{
+  return valid(id) ? g_end_pct[id] : -1;
 }
 
 void velapaw_store_seed(velapaw_pet_id_t id, int daily_g)
@@ -601,11 +743,17 @@ void velapaw_store_delete(velapaw_pet_id_t id)
       memcpy(g_day_g[p], g_day_g[p + 1], sizeof(g_day_g[0]));
       memcpy(g_day_m[p], g_day_m[p + 1], sizeof(g_day_m[0]));
       g_bcs[p] = g_bcs[p + 1];
+      g_plan_g[p]  = g_plan_g[p + 1];
+      g_due_g[p]   = g_due_g[p + 1];
+      g_end_pct[p] = g_end_pct[p + 1];
     }
 
   memset(g_day_g[VELAPAW_MAX_PETS - 1], 0, sizeof(g_day_g[0]));
   memset(g_day_m[VELAPAW_MAX_PETS - 1], 0, sizeof(g_day_m[0]));
   g_bcs[VELAPAW_MAX_PETS - 1] = -1;
+  g_plan_g[VELAPAW_MAX_PETS - 1]  = 0;
+  g_due_g[VELAPAW_MAX_PETS - 1]   = 0;
+  g_end_pct[VELAPAW_MAX_PETS - 1] = -1;
 
   vp_persist();
 }
@@ -622,4 +770,138 @@ void velapaw_store_set_bcs(velapaw_pet_id_t id, int bcs)
 int velapaw_store_get_bcs(velapaw_pet_id_t id)
 {
   return valid(id) ? g_bcs[id] : -1;
+}
+
+/* status.md is the only place the agent learns meal times from, and until
+ * this existed nothing rewrote it when one changed: a time set by the agent,
+ * the Edit dialog or the voice dialog stayed invisible to the agent until the
+ * next feed or reboot.  On 2026-10-13 the agent moved Bob's breakfast to
+ * 07:45, then one turn later read status.md and told the owner it was 05:00.
+ * The history arrays are untouched, so this writes only the digest.
+ */
+void velapaw_store_status_refresh(void)
+{
+  vp_status_write();
+}
+
+/* today_total() does not reconcile, so a day that ended at the daily cap made
+ * the feeder refuse every meal of the next one: the first meal saw
+ * yesterday's grams, was marked "limit hit" and nothing was fed -- and with
+ * no feed, nothing ever rolled the window.  Only a feed or a reboot did.
+ * Called by the UI when the day number changes.  UI thread only --
+ * vp_sync_day() is not safe against a second caller.
+ */
+void velapaw_store_sync_day(void)
+{
+  long before = g_hist_day;
+
+  vp_sync_day();
+  if (g_hist_day != before)
+    {
+      vp_status_write();
+    }
+}
+
+long velapaw_store_hist_day(void)
+{
+  return g_hist_day;
+}
+
+/****************************************************************************
+ * Small state files and the health log
+ *
+ * Raw open/write/close: no stdio buffer to allocate and nothing left to
+ * flush, which matters for the health log -- the stall-note thread writes it
+ * seconds before the board is reset.  littlefs commits a file at close, so a
+ * reset part-way through a put leaves the previous copy, not a torn one.
+ ****************************************************************************/
+
+#define VP_HEALTH     VP_DIR "/health.log"
+#define VP_HEALTH_OLD VP_DIR "/health.old"
+#define VP_HEALTH_MAX 4096     /* then rotate: the pair keeps ~8 KB, ~8 h */
+
+static int vp_path(char *path, size_t size, const char *name)
+{
+  int n = snprintf(path, size, VP_DIR "/%s", name);
+
+  return (n > 0 && (size_t)n < size) ? 0 : -1;
+}
+
+int velapaw_store_put(const char *name, const void *buf, size_t len)
+{
+  char path[96];
+  ssize_t n;
+  int fd;
+
+  if (name == NULL || buf == NULL || !vp_ensure_dir() ||
+      vp_path(path, sizeof(path), name) < 0)
+    {
+      return -1;
+    }
+
+  fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+  if (fd < 0)
+    {
+      return -1;
+    }
+
+  n = write(fd, buf, len);
+  if (close(fd) < 0)
+    {
+      return -1;
+    }
+
+  return n == (ssize_t)len ? 0 : -1;
+}
+
+int velapaw_store_get(const char *name, void *buf, size_t len)
+{
+  char path[96];
+  ssize_t n;
+  int fd;
+
+  if (name == NULL || buf == NULL || vp_path(path, sizeof(path), name) < 0)
+    {
+      return -1;
+    }
+
+  fd = open(path, O_RDONLY);
+  if (fd < 0)
+    {
+      return -1;
+    }
+
+  n = read(fd, buf, len);
+  close(fd);
+  return n < 0 ? -1 : (int)n;
+}
+
+void velapaw_store_log_health(const char *line)
+{
+  struct stat st;
+  int fd;
+
+  if (line == NULL || !vp_ensure_dir())
+    {
+      return;
+    }
+
+  /* unlink first: whether rename() replaces an existing target is up to
+   * the filesystem, and this must not depend on it. */
+
+  if (stat(VP_HEALTH, &st) == 0 && st.st_size >= VP_HEALTH_MAX)
+    {
+      unlink(VP_HEALTH_OLD);
+      rename(VP_HEALTH, VP_HEALTH_OLD);
+    }
+
+  fd = open(VP_HEALTH, O_WRONLY | O_CREAT | O_APPEND, 0644);
+  if (fd < 0)
+    {
+      return;
+    }
+
+  write(fd, line, strlen(line));
+  write(fd, "\n", 1);
+  close(fd);
 }

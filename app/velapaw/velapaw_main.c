@@ -97,12 +97,18 @@ int main(int argc, char *argv[])
 
       if (argc > 2 && strcmp(argv[2], "mic") == 0)
         {
-          static int16_t audio[VELAPAW_KWS_SAMPLE_RATE];
+          int16_t *audio = malloc(sizeof(int16_t) * VELAPAW_KWS_SAMPLE_RATE);
           struct velapaw_kws_result_s r;
           int reps = 1;
           int rep;
           int n;
           int i;
+
+          if (audio == NULL)
+            {
+              printf("velapaw: out of memory for audio buffer\n");
+              return 1;
+            }
 
           if (argc > 3)
             {
@@ -155,6 +161,7 @@ int main(int argc, char *argv[])
                 {
                   printf("velapaw: capture %d failed: %d\n", rep, n);
                   velapaw_mic_shutdown();
+                  free(audio);
                   return 1;
                 }
 
@@ -181,6 +188,7 @@ int main(int argc, char *argv[])
                 {
                   printf("velapaw: classify failed\n");
                   velapaw_mic_shutdown();
+                  free(audio);
                   return 1;
                 }
 
@@ -200,6 +208,7 @@ int main(int argc, char *argv[])
            */
 
           velapaw_mic_shutdown();
+          free(audio);
           return 0;
         }
 
@@ -222,6 +231,12 @@ int main(int argc, char *argv[])
    * "voice off" -- is the same whatever the cause.  This reads the state out
    * of memory instead, from a task, after the console exists.
    */
+
+  if (argc > 1 && strcmp(argv[1], "codec") == 0)
+    {
+      extern int velapaw_codec_dump(int argc, char *argv[]);
+      return velapaw_codec_dump(argc, argv);
+    }
 
   if (argc > 1 && strcmp(argv[1], "voice") == 0)
     {

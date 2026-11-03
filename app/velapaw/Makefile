@@ -1,7 +1,7 @@
 ############################################################################
 # VelaPaw - contest 2026 team 043 - Makefile
 #
-# This is the build used on the real ESP32-S3 board (apps/examples/velapaw).
+# This is the build used on the real ESP32-S3 board.
 # CMakeLists.txt mirrors it for the CMake/emulator path; keep the two in sync.
 ############################################################################
 
@@ -23,7 +23,10 @@ PRIORITY  = SCHED_PRIORITY_DEFAULT
 STACKSIZE = 49152
 MODULE    = $(CONFIG_LVX_USE_DEMO_CONTEST2026_043_VELAPAW)
 
-VELAPAW_DIR  = $(APPDIR)/examples/velapaw
+# The app's own directory, wherever it is linked in: apps/examples/velapaw in
+# the team's tree, apps/packages/demos/contest2026_043_velapaw after a fresh
+# repo sync (README section 7). Make.defs registers whichever exists.
+VELAPAW_DIR  := $(CURDIR)
 VELAPAW_TFLM = $(APPDIR)/mlearning/tflite-micro/tflite-micro
 
 # Module headers (hal/, infer/, identity/, store/) resolve from the app root;
